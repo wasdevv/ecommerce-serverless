@@ -1,0 +1,100 @@
+name: deploy-environment
+
+# Deploy de UM ambiente, chamado pelo deploy.yml. Plan e apply no mesmo job,
+# a partir do mesmo checkout e dos mesmos artefatos: o que é aplicado é
+# exatamente o plano salvo deste commit.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    # Um deploy por ambiente por vez; o seguinte espera (não cancela) para
+    # nunca interromper um apply no meio.
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      # Em env do job para poder ser testado no if do passo (secrets não é
+      # permitido em if).
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: lambda-artifacts
+          path: build
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.13.4
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init
+        working-directory: infrastructure/terraform
+        run: >
+          terraform init -input=false
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=ecommerce-serverless/${{ inputs.environment }}/terraform.tfstate"
+          -backend-config="region=${{ env.AWS_REGION }}"
+          -backend-config="use_lockfile=true"
+          -backend-config="encrypt=true"
+      - name: terraform plan
+        working-directory: infrastructure/terraform
+        run: terraform plan -input=false -no-color -var-file=environments/${{ inputs.environment }}.tfvars -out=tfplan
+      - name: terraform apply (saved plan)
+        working-directory: infrastructure/terraform
+        run: terraform apply -input=false -no-color tfplan
+
+      - name: Read outputs
+        id: out
+        working-directory: infrastructure/terraform
+        run: |
+          echo "ops=$(terraform output -raw ops_function_name)" >> "$GITHUB_OUTPUT"
+          echo "api=$(terraform output -raw api_endpoint)" >> "$GITHUB_OUTPUT"
+
+      # Migração ANTES do smoke. Schema só avança: rollback de código não
+      # desfaz migração (ver README, "Recuperação de deploy").
+      - name: Run migrations
+        run: |
+          aws lambda invoke --function-name "${{ steps.out.outputs.ops }}" \
+            --cli-binary-format raw-in-base64-out --payload '{"action":"migrate"}' migrate.json > invoke.json
+          cat migrate.json; echo
+          if grep -q FunctionError invoke.json; then echo "::error::migration failed"; exit 1; fi
+
+      - name: Prepare smoke fixture
+        id: fixture
+        run: |
+          aws lambda invoke --function-name "${{ steps.out.outputs.ops }}" \
+            --cli-binary-format raw-in-base64-out --payload '{"action":"smoke-fixture"}' fixture.json > invoke.json
+          if grep -q FunctionError invoke.json; then cat fixture.json; exit 1; fi
+          echo "product=$(jq -r .productId fixture.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test against API Gateway
+        env:
+          SMOKE_PRODUCT_ID: ${{ steps.fixture.outputs.product }}
+        run: node scripts/smoke.mjs "${{ steps.out.outputs.api }}"
+
+      # Opcional: só roda com o secret configurado, e falha de Slack não
+      # derruba um deploy que já deu certo.
+      - name: Notify Slack
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        continue-on-error: true
+        env:
+          STATUS: ${{ job.status }}
+        run: |
+          curl -fsS -X POST -H 'content-type: application/json' \
+            -d "{\"text\":\"ecommerce-serverless ${{ inputs.environment }} deploy: $STATUS (${GITHUB_SHA::7})\"}" \
+            "$SLACK_WEBHOOK_URL"

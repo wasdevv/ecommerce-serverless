@@ -1,0 +1,370 @@
+openapi: 3.1.0
+info:
+  title: ecommerce-serverless API
+  version: 0.1.0
+  description: |
+    API de e-commerce de estudo. Valores monetários em centavos (inteiro) e
+    moeda única BRL. Toda resposta leva o header `X-Correlation-Id`; envie o
+    seu (8-128 caracteres `[A-Za-z0-9._-]`) para rastrear uma operação.
+servers:
+  - url: http://localhost:3000/api/v1
+    description: docker compose local
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com/api/v1
+    description: API Gateway HTTP API
+    variables:
+      apiId: { default: example }
+      region: { default: us-east-1 }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 10000, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  headers:
+    CorrelationId:
+      description: ID de correlação da requisição (ecoado ou gerado).
+      schema: { type: string }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, correlationId]
+          properties:
+            code:
+              type: string
+              examples: [validation_error, unauthorized, forbidden, not_found, insufficient_stock, idempotency_key_reused, internal_error]
+            message: { type: string }
+            correlationId: { type: string }
+            details: {}
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [customer, admin] }
+        createdAt: { type: string, format: date-time }
+    Product:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string }
+        priceCents: { type: integer, minimum: 1 }
+        stock: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ProductCreate:
+      type: object
+      additionalProperties: false
+      required: [sku, name, priceCents, stock]
+      properties:
+        sku: { type: string, maxLength: 64 }
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        priceCents: { type: integer, minimum: 1, maximum: 100000000 }
+        stock: { type: integer, minimum: 0, maximum: 1000000 }
+    ProductUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        priceCents: { type: integer, minimum: 1, maximum: 100000000 }
+        stock: { type: integer, minimum: 0, maximum: 1000000 }
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [confirmed] }
+        totalCents: { type: integer }
+        currency: { type: string, const: BRL }
+        createdAt: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId: { type: string, format: uuid }
+              quantity: { type: integer }
+              unitPriceCents: { type: integer }
+              subtotalCents: { type: integer }
+    Page:
+      type: object
+      properties:
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+  responses:
+    BadRequest:
+      description: Validação falhou ou JSON malformado.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Unauthorized:
+      description: Token ausente, inválido ou expirado.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Forbidden:
+      description: Papel insuficiente.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: Recurso inexistente ou de outro usuário (indistinguíveis de propósito).
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: Conflito de estado (email/SKU repetido, estoque insuficiente, Idempotency-Key reutilizada).
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    InternalError:
+      description: Erro inesperado. Sem detalhes internos; use o correlationId para achar o log.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+paths:
+  /health:
+    get:
+      summary: Saúde do processo (não consulta dependências)
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { status: { const: ok } } } } }
+
+  /auth/register:
+    post:
+      summary: Cadastro público (sempre papel customer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        "201":
+          description: Criado
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/User" } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /auth/login:
+    post:
+      summary: Login; devolve JWT HS256 expirável
+      description: Email inexistente e senha errada têm a mesma resposta 401.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      accessToken: { type: string }
+                      tokenType: { const: Bearer }
+                      expiresAt: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /products:
+    get:
+      summary: Catálogo paginado (público, cache Redis com fallback para o banco)
+      parameters: [{ $ref: "#/components/parameters/Page" }, { $ref: "#/components/parameters/PageSize" }]
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Cache: { description: "hit ou miss", schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: "#/components/schemas/Product" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    post:
+      summary: Cria produto (admin)
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ProductCreate" } } }
+      responses:
+        "201":
+          description: Criado
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Product" } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /products/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Detalhe do produto
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Product" } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Atualiza produto (admin) e invalida o cache
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ProductUpdate" } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Product" } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /orders:
+    post:
+      summary: Cria pedido (transacional e idempotente)
+      description: |
+        Preço calculado no servidor. Estoque debitado na mesma transação, sem
+        permitir negativo sob concorrência. Repetir a mesma `Idempotency-Key`
+        com o mesmo payload devolve o mesmo pedido (200, `Idempotent-Replayed: true`)
+        sem novo débito; payload diferente devolve 409.
+      security: [{ bearer: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._:-]{8,128}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [productId, quantity]
+                    properties:
+                      productId: { type: string, format: uuid }
+                      quantity: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        "201":
+          description: Pedido criado
+          headers:
+            Idempotent-Replayed: { schema: { const: "false" } }
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Order" } } } } }
+        "200":
+          description: Replay de uma requisição idempotente já concluída
+          headers:
+            Idempotent-Replayed: { schema: { const: "true" } }
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Order" } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      summary: Lista os pedidos do usuário autenticado
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/Page" }, { $ref: "#/components/parameters/PageSize" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: "#/components/schemas/Order" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /orders/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Detalhe de um pedido do próprio usuário
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Order" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /uploads/presign:
+    post:
+      summary: Gera POST pré-assinado para o bucket privado
+      description: |
+        A chave é gerada pelo servidor sob `users/<id do token>/`. A policy
+        assinada fixa chave, Content-Type e tamanho máximo; expira em 5 min.
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [contentType, sizeBytes]
+              properties:
+                contentType: { type: string, enum: [image/jpeg, image/png, image/webp] }
+                sizeBytes: { type: integer, minimum: 1, maximum: 5242880 }
+      responses:
+        "201":
+          description: Formulário assinado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      method: { const: POST }
+                      url: { type: string }
+                      fields: { type: object, additionalProperties: { type: string } }
+                      key: { type: string }
+                      maxBytes: { type: integer }
+                      expiresAt: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { description: Bucket não configurado }

@@ -1,0 +1,56 @@
+{
+  "name": "ecommerce-serverless-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API de e-commerce em Express que roda local (HTTP) e em AWS Lambda (API Gateway HTTP API).",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "seed": "node scripts/seed.js",
+    "bootstrap-admin": "node scripts/bootstrap-admin.js",
+    "jobs:local": "node scripts/local-jobs.js",
+    "lint": "eslint .",
+    "test": "jest --runInBand",
+    "test:coverage": "jest --runInBand --coverage",
+    "build:lambda": "bash ../scripts/build-lambda.sh"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@aws-sdk/client-secrets-manager": "^3.1149.0",
+    "@aws-sdk/client-sqs": "^3.1149.0",
+    "@aws-sdk/s3-presigned-post": "^3.1149.0",
+    "@codegenie/serverless-express": "^5.0.0",
+    "bcryptjs": "^3.0.3",
+    "express": "^5.3.0",
+    "ioredis": "^5.8.0",
+    "joi": "^18.2.9",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0"
+  },
+  "optionalDependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.223.0",
+    "@opentelemetry/id-generator-aws-xray": "^2.1.0",
+    "@opentelemetry/instrumentation-aws-sdk": "^0.78.0",
+    "@opentelemetry/instrumentation-express": "^0.71.0",
+    "@opentelemetry/instrumentation-http": "^0.223.0",
+    "@opentelemetry/instrumentation-ioredis": "^0.71.0",
+    "@opentelemetry/instrumentation-pg": "^0.75.0",
+    "@opentelemetry/propagator-aws-xray": "^2.2.0",
+    "@opentelemetry/resources": "^2.12.0",
+    "@opentelemetry/sdk-node": "^0.223.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "jest": "^30.5.2",
+    "supertest": "^7.3.1"
+  }
+}

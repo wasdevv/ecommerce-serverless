@@ -1,0 +1,112 @@
+name: tests
+
+# Checks que não precisam de AWS: rodam em todo PR (inclusive de fork, sem
+# segredo nenhum) e são reaproveitados pelo deploy via workflow_call.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ecommerce_test
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # PostgreSQL e Redis reais: concorrência, constraints e fallback de cache
+      # não se testam com mock. Limiar de 80% configurado no jest.config.js.
+      - run: npm run test:coverage
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/ecommerce_test
+          TEST_REDIS_URL: redis://localhost:6379/15
+      - name: Build Lambda artifacts
+        run: bash ../scripts/build-lambda.sh
+      - name: Invoke the built artifact with an API Gateway event
+        run: bash ../scripts/invoke-artifact.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lambda-artifacts
+          path: build/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  compose:
+    # Clone limpo -> comandos do README -> smoke: API, PostgreSQL, Redis,
+    # collector (sidecar), ElastiCache-like e SQS/S3 emulados.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start the local stack
+        run: docker compose up -d --build --wait api postgres redis otel-collector sqs
+      - run: docker compose run --rm api npm run migrate
+      - run: docker compose run --rm api npm run seed
+      - run: docker compose up -d jobs
+      - name: Smoke test
+        run: node scripts/smoke.mjs http://localhost:3000 | tee smoke.log
+      - name: Order event reached the worker with the same correlation id
+        run: |
+          corr=$(grep -o 'correlationId=[^ ]*$' smoke.log | tail -1 | cut -d= -f2)
+          for i in $(seq 1 30); do
+            n=$(docker compose exec -T postgres psql -U ecommerce -tAc "select count(*) from notifications")
+            [ "$n" -ge 1 ] && break
+            sleep 2
+          done
+          echo "notifications=$n"
+          test "$n" -ge 1
+          docker compose logs jobs | grep "\"correlationId\":\"$corr\"" | grep "order event processed"
+      - name: Collector received spans from the API
+        run: docker compose logs otel-collector | grep -m5 -E "spans"
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --tail 200
+
+  terraform:
+    needs: backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.13.4
+      - uses: actions/download-artifact@v8
+        with:
+          name: lambda-artifacts
+          path: build
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      # Plan dos três ambientes contra provider AWS simulado (ver tests/plan.tftest.hcl).
+      - run: terraform test
+      - run: terraform -chdir=bootstrap init -backend=false -input=false && terraform -chdir=bootstrap validate
+      - name: Terraform docs are up to date
+        uses: terraform-docs/gh-actions@v1.4.1
+        with:
+          working-dir: infrastructure/terraform,infrastructure/terraform/bootstrap,infrastructure/terraform/modules/apigateway,infrastructure/terraform/modules/cache,infrastructure/terraform/modules/database,infrastructure/terraform/modules/iam,infrastructure/terraform/modules/lambda,infrastructure/terraform/modules/monitoring,infrastructure/terraform/modules/networking,infrastructure/terraform/modules/queue,infrastructure/terraform/modules/storage
+          config-file: infrastructure/terraform/.terraform-docs.yml
+          fail-on-diff: true

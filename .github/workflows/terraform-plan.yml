@@ -1,0 +1,107 @@
+name: terraform-plan
+
+# Plan real contra a conta AWS, comentado no PR. Só roda quando:
+#   - o PR vem do próprio repositório (fork nunca recebe credencial), e
+#   - a infraestrutura foi configurada (variável AWS_PLAN_ROLE_ARN existe).
+# Sem isso o job aparece como "skipped" e o resumo diz por quê — nada de
+# check verde fingindo que um plan rodou.
+on:
+  pull_request:
+    paths:
+      - "infrastructure/**"
+      - "backend/**"
+      - "monitoring/**"
+      - "scripts/build-lambda.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report whether a remote plan will run
+        env:
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          CONFIGURED: ${{ vars.AWS_PLAN_ROLE_ARN != '' }}
+        run: |
+          if [ "$SAME_REPO" != "true" ]; then
+            echo "Remote plan: NOT RUN — pull request from a fork gets no AWS credentials." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$CONFIGURED" != "true" ]; then
+            echo "Remote plan: NOT RUN — AWS is not configured (AWS_PLAN_ROLE_ARN repository variable is missing)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Remote plan: running for dev, staging and prod." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  plan:
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.AWS_PLAN_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev, staging, prod]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: bash scripts/build-lambda.sh
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.13.4
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: terraform init
+        working-directory: infrastructure/terraform
+        run: >
+          terraform init -input=false
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=ecommerce-serverless/${{ matrix.environment }}/terraform.tfstate"
+          -backend-config="region=${{ vars.AWS_REGION || 'us-east-1' }}"
+          -backend-config="use_lockfile=true"
+          -backend-config="encrypt=true"
+      - name: terraform plan
+        id: plan
+        working-directory: infrastructure/terraform
+        # -lock=false: o role de plan é somente leitura e não grava o .tflock.
+        run: |
+          terraform plan -input=false -lock=false -no-color \
+            -var-file=environments/${{ matrix.environment }}.tfvars -out=tfplan
+      - name: Sanitized summary
+        if: always()
+        working-directory: infrastructure/terraform
+        env:
+          OUTCOME: ${{ steps.plan.outcome }}
+          ENVIRONMENT: ${{ matrix.environment }}
+        # Só ações e endereços de recurso — o plano bruto pode conter valores
+        # sensíveis e não vai para o comentário.
+        run: |
+          {
+            echo "### terraform plan — \`$ENVIRONMENT\`: $OUTCOME"
+            if [ -f tfplan ]; then
+              terraform show -json tfplan | jq -r '
+                [.resource_changes[] | select(.change.actions != ["no-op"])] as $c
+                | "create: \([$c[] | select(.change.actions == ["create"])] | length) · update: \([$c[] | select(.change.actions == ["update"])] | length) · replace: \([$c[] | select(.change.actions | length == 2)] | length) · destroy: \([$c[] | select(.change.actions == ["delete"])] | length)",
+                  "",
+                  "<details><summary>resources</summary>", "",
+                  ($c[] | "- `\(.change.actions | join("/"))` \(.address)"),
+                  "", "</details>"'
+            else
+              echo "Plan failed — see the job log (output is not copied here)."
+            fi
+          } > summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment ${{ github.event.pull_request.number }} --body-file infrastructure/terraform/summary.md

@@ -1,0 +1,62 @@
+name: deploy
+
+# main -> checks -> dev (automático) -> prod (GitHub Environment "prod" com
+# revisor obrigatório). staging é manual via workflow_dispatch.
+#
+# Sem AWS configurada (variável de repositório AWS_DEPLOY_ENABLED != 'true')
+# os jobs de deploy aparecem como "skipped": os checks ainda rodam e passam
+# de verdade, e nenhum deploy é dado como feito.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/tests.yml
+
+  deploy-dev:
+    needs: checks
+    if: vars.AWS_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || inputs.environment == 'dev')
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+
+  deploy-staging:
+    needs: checks
+    if: vars.AWS_DEPLOY_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.environment == 'staging'
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+
+  deploy-prod:
+    needs: [checks, deploy-dev]
+    # Só depois de dev passar no smoke; a aprovação manual é do Environment.
+    if: >-
+      always() && needs.checks.result == 'success' && vars.AWS_DEPLOY_ENABLED == 'true'
+      && ((github.event_name == 'push' && needs.deploy-dev.result == 'success')
+          || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'))
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit

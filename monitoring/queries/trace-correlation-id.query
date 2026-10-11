@@ -1,0 +1,6 @@
+# Troque o valor pelo X-Correlation-Id recebido na resposta HTTP.
+# Selecione os log groups da api, dispatcher e worker: o mesmo ID aparece
+# na requisição, na publicação do evento e no processamento pelo worker.
+fields @timestamp, @log, level, msg, route, status, eventId, messageId
+| filter correlationId = "COLE-O-ID-AQUI"
+| sort @timestamp asc

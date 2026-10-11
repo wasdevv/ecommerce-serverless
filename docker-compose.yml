@@ -1,0 +1,99 @@
+# Ambiente local completo: API + PostgreSQL + Redis + collector OpenTelemetry
+# (sidecar) + emuladores de SQS (ElasticMQ) e S3 (MinIO). Nenhuma credencial
+# AWS real é usada aqui.
+#
+#   docker compose up -d --build --wait
+#   docker compose run --rm api npm run migrate
+#   docker compose run --rm api npm run seed
+
+x-app-env: &app-env
+  APP_ENV: local
+  LOG_LEVEL: info
+  DATABASE_URL: postgres://ecommerce:ecommerce@postgres:5432/ecommerce
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: ${JWT_SECRET:-local-dev-only-change-me}
+  ORDER_EVENTS_QUEUE_URL: http://sqs:9324/000000000000/order-events
+  AWS_ENDPOINT_URL_SQS: http://sqs:9324
+  UPLOADS_BUCKET: uploads
+  # Endpoint visto pelo navegador/curl no host, para a URL assinada funcionar fora do compose.
+  AWS_ENDPOINT_URL_S3: http://localhost:9000
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local-secret-key
+  OTEL_SERVICE_NAME: ecommerce-api
+  # O "sidecar": o app só conhece localhost-equivalente do collector, nunca o backend de traces.
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+services:
+  api:
+    build: ./backend
+    ports: ["3000:3000"]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+      sqs: { condition: service_started }
+
+  jobs:
+    build: ./backend
+    command: ["node", "scripts/local-jobs.js"]
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ecommerce-jobs
+    depends_on:
+      postgres: { condition: service_healthy }
+      sqs: { condition: service_started }
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ecommerce
+      POSTGRES_PASSWORD: ecommerce
+      POSTGRES_DB: ecommerce
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecommerce"]
+      interval: 5s
+      retries: 10
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["./monitoring/otel-collector.yaml:/etc/otelcol/config.yaml:ro"]
+    ports: ["4318:4318"]
+
+  sqs:
+    image: softwaremill/elasticmq-native:1.6.11
+    volumes: ["./monitoring/elasticmq.conf:/opt/elasticmq.conf:ro"]
+    ports: ["9324:9324"]
+
+  s3:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: local
+      MINIO_ROOT_PASSWORD: local-secret-key
+    ports: ["9000:9000"]
+
+  s3-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on: [s3]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set local http://s3:9000 local local-secret-key; do sleep 1; done
+        mc mb --ignore-existing local/uploads
+        mc anonymous set none local/uploads
+
+volumes:
+  pgdata:

@@ -1,0 +1,4 @@
+fields route, durationMs
+| filter msg = "request completed" or msg = "request failed"
+| stats count(*) as requests, avg(durationMs) as avg_ms, pct(durationMs, 95) as p95_ms by route
+| sort p95_ms desc

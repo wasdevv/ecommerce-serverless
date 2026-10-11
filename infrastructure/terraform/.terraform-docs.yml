@@ -1,0 +1,15 @@
+# Gera a seção de inputs/outputs de cada README entre os marcadores
+# BEGIN_TF_DOCS/END_TF_DOCS. O CI roda com --output-check e falha se a doc
+# estiver desatualizada em relação ao código.
+formatter: markdown table
+output:
+  file: README.md
+  mode: inject
+sort:
+  enabled: true
+  by: required
+settings:
+  anchor: false
+  default: true
+  hide-empty: true
+  lockfile: false

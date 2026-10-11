@@ -1,0 +1,7 @@
+# Copie para environments/<env>.backend.hcl (ignorado pelo git) ou passe os
+# valores por -backend-config no CI. Um key por ambiente = state isolado.
+bucket       = "ecommerce-serverless-tfstate-<ACCOUNT_ID>"
+key          = "ecommerce-serverless/dev/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true

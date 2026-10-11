@@ -1,0 +1,29 @@
+# Collector OpenTelemetry local — o sidecar do docker compose.
+# A API exporta OTLP/HTTP para cá; o collector faz batch e decide o destino.
+# Localmente: só o exporter "debug" (spans no log do container).
+# Para mandar ao X-Ray de uma conta real, descomente o exporter awsxray e
+# forneça credenciais AWS ao container do collector (não à API).
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+
+exporters:
+  debug:
+    verbosity: basic
+  # awsxray:
+  #   region: us-east-1
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]

@@ -1,0 +1,73 @@
+{
+  "widgets": [
+    {
+      "type": "metric", "x": 0, "y": 0, "width": 8, "height": 6,
+      "properties": {
+        "title": "Tráfego (requisições/min)", "region": "${region}", "stat": "Sum", "period": 60, "view": "timeSeries",
+        "metrics": [["AWS/ApiGateway", "Count", "ApiId", "${api_id}", "Stage", "$default"]]
+      }
+    },
+    {
+      "type": "metric", "x": 8, "y": 0, "width": 8, "height": 6,
+      "properties": {
+        "title": "Latência da API (ms)", "region": "${region}", "period": 60, "view": "timeSeries",
+        "metrics": [
+          ["AWS/ApiGateway", "Latency", "ApiId", "${api_id}", "Stage", "$default", { "stat": "p50", "label": "p50" }],
+          ["...", { "stat": "p95", "label": "p95" }],
+          ["...", { "stat": "p99", "label": "p99" }]
+        ]
+      }
+    },
+    {
+      "type": "metric", "x": 16, "y": 0, "width": 8, "height": 6,
+      "properties": {
+        "title": "Erros HTTP", "region": "${region}", "stat": "Sum", "period": 60, "view": "timeSeries",
+        "metrics": [
+          ["AWS/ApiGateway", "4xx", "ApiId", "${api_id}", "Stage", "$default"],
+          [".", "5xx", ".", ".", ".", "."]
+        ]
+      }
+    },
+    {
+      "type": "metric", "x": 0, "y": 6, "width": 12, "height": 6,
+      "properties": {
+        "title": "Lambda: erros e throttles", "region": "${region}", "stat": "Sum", "period": 60, "view": "timeSeries",
+        "metrics": [
+%{ for i, fn in functions ~}
+          ["AWS/Lambda", "Errors", "FunctionName", "${fn}"],
+          [".", "Throttles", ".", "."]${i < length(functions) - 1 ? "," : ""}
+%{ endfor ~}
+        ]
+      }
+    },
+    {
+      "type": "metric", "x": 12, "y": 6, "width": 12, "height": 6,
+      "properties": {
+        "title": "Lambda: duração p95 (ms)", "region": "${region}", "stat": "p95", "period": 60, "view": "timeSeries",
+        "metrics": [
+%{ for i, fn in functions ~}
+          ["AWS/Lambda", "Duration", "FunctionName", "${fn}"]${i < length(functions) - 1 ? "," : ""}
+%{ endfor ~}
+        ]
+      }
+    },
+    {
+      "type": "metric", "x": 0, "y": 12, "width": 12, "height": 6,
+      "properties": {
+        "title": "Fila de eventos e DLQ", "region": "${region}", "stat": "Maximum", "period": 60, "view": "timeSeries",
+        "metrics": [
+          ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${queue_name}", { "label": "fila: visíveis" }],
+          [".", "ApproximateAgeOfOldestMessage", ".", ".", { "label": "fila: idade da mais antiga (s)" }],
+          [".", "ApproximateNumberOfMessagesVisible", ".", "${dlq_name}", { "label": "DLQ: visíveis" }]
+        ]
+      }
+    },
+    {
+      "type": "log", "x": 12, "y": 12, "width": 12, "height": 6,
+      "properties": {
+        "title": "Últimos erros (logs estruturados)", "region": "${region}", "view": "table",
+        "query": "SOURCE '/aws/lambda/${functions[0]}' | fields @timestamp, correlationId, route, status, msg | filter level = 'error' | sort @timestamp desc | limit 20"
+      }
+    }
+  ]
+}

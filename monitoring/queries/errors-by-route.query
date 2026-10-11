@@ -1,0 +1,4 @@
+fields @timestamp, route, status, durationMs, correlationId
+| filter level = "error"
+| stats count(*) as errors by route, status
+| sort errors desc

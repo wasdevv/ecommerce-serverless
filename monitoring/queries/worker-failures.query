@@ -1,0 +1,4 @@
+fields @timestamp, messageId, err, correlationId
+| filter msg = "order event failed"
+| sort @timestamp desc
+| limit 50
