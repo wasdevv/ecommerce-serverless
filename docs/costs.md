@@ -1,10 +1,15 @@
 # Estimativa de custos
 
 > **Isto é uma estimativa, não uma fatura.** Valores em USD, região
-> **us-east-1**, preços sob demanda de lista conforme conhecidos em
-> **10/10/2026**, sem free tier, sem impostos e sem descontos. Preços mudam:
-> confirme na [AWS Pricing Calculator](https://calculator.aws/) antes de
-> provisionar. O custo real só aparece no Cost Explorer depois do uso.
+> **us-east-1**, sem free tier, sem impostos e sem descontos, montada em
+> **10/10/2026**.
+>
+> **De onde vêm os preços unitários:** de uma tabela de referência de preços
+> sob demanda usada na escrita deste documento — **não** foram consultados na
+> AWS Pricing Calculator nem nas páginas de preço da AWS nessa data. Trate cada
+> linha como ordem de grandeza e confirme na
+> [AWS Pricing Calculator](https://calculator.aws/) antes de provisionar. O
+> custo real só aparece no Cost Explorer depois do uso.
 
 Pressupostos: 730 h/mês, tráfego de estudo (poucos milhares de requisições/mês),
 logs com poucos GB. O que domina é o **custo fixo por hora** — recursos que

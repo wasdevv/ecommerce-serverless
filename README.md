@@ -372,6 +372,7 @@ para receber por email (confirme a assinatura do SNS).
 | Latência alta | Dashboard → p95 por função; X-Ray → service map; `slowest-routes.query` |
 | `X-Cache: miss` sempre | Redis inacessível: log `cache unavailable, falling back to database` (a API segue funcionando) |
 | Timeout conectando no banco | SG do Proxy só aceita o SG das Lambdas; Proxy exige TLS (`DB_SSL=true`) |
+| `password authentication failed` depois de dias funcionando | Rotação automática da senha do RDS (a cada 7 dias por padrão): a Lambda leu o segredo no cold start e guardou a senha antiga. Contorno imediato: forçar novos ambientes de execução (ex.: novo deploy ou `aws lambda update-function-configuration` mudando uma variável). Correção definitiva: IAM auth no RDS Proxy — ver [decisions.md](docs/decisions.md#segredos-fora-do-state-do-terraform) |
 | Lambda sem acesso a SQS/Secrets | Rota da sub-rede privada para o NAT; IAM do role da função |
 
 ## Recuperação de deploy e migrações
@@ -396,7 +397,9 @@ terraform destroy -var-file=environments/dev.tfvars
 
 ## Custos
 
-Estimativa datada (us-east-1, 10/10/2026, preço de lista, **não é fatura**):
+Estimativa datada (us-east-1, 10/10/2026, **não é fatura**). Os preços
+unitários vêm de uma tabela de referência, **não** de consulta à AWS Pricing
+Calculator — confirme lá antes do primeiro apply:
 **dev ≈ US$ 90/mês (≈ US$ 0,12/h)**, **prod ≈ US$ 200/mês**. O que domina é o
 custo fixo de NAT, RDS Proxy, RDS e ElastiCache — não as Lambdas. Detalhamento,
 pressupostos e como estudar gastando centavos: [docs/costs.md](docs/costs.md).
@@ -442,7 +445,10 @@ README por módulo em `infrastructure/terraform/modules/*/`.
 | `terraform fmt`, `validate`, `test` (plan simulado × 3 ambientes) | ✅ verificado (Terraform 1.16.5, AWS provider 6.68) |
 | Build da imagem Docker + `docker compose` completo + smoke + evento chegando ao worker com o mesmo correlation ID + spans no collector | ✅ verificado no CI (job `compose`) |
 | `terraform plan`/`apply` real, migração e smoke na AWS | ❌ não executado — exige conta AWS configurada |
+| Upload: conteúdo da URL assinada (chave no prefixo do usuário, tipo, tamanho máximo, validade) | ✅ verificado nos testes, decodificando a policy assinada |
+| Upload: envio real de um arquivo ao bucket (MinIO local ou S3) usando essa URL | ❌ não executado — o passo `curl -F file=@…` da seção de API está documentado, mas não foi rodado |
 | Traces no X-Ray / layer OpenTelemetry na Lambda | ❌ não verificado em conta real |
+| Preços da estimativa de custos | ⚠️ tabela de referência, não consultada na AWS Pricing Calculator |
 
 ## Licença
 
