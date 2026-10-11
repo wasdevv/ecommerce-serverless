@@ -57,6 +57,16 @@ function baseConfig() {
       maxBytes: int('UPLOAD_MAX_BYTES', 5 * 1024 * 1024),
       expiresSeconds: int('UPLOAD_URL_TTL_SECONDS', 300),
     },
+    // Endpoint SageMaker (AWS) ou URL do serve.py (local). Nenhum dos dois =
+    // recomendação só por mais vendidos.
+    recommender: {
+      endpointName: process.env.RECOMMENDER_ENDPOINT_NAME,
+      url: process.env.RECOMMENDER_URL,
+      timeoutMs: int('RECOMMENDER_TIMEOUT_MS', 800),
+    },
+    ml: {
+      bucket: process.env.ML_BUCKET,
+    },
     admin: {
       email: process.env.ADMIN_EMAIL,
       passwordSecretArn: process.env.ADMIN_PASSWORD_SECRET_ARN,

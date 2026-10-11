@@ -45,6 +45,24 @@ cobram mesmo sem nenhuma requisição.
 
 `staging` tem o mesmo perfil do `dev`.
 
+## Recomendador (opcional, `enable_recommender`)
+
+Não entra nos totais acima, e **não foi estimado em dólares** aqui. O modelo de
+cobrança é o que importa para estudar:
+
+- **SageMaker Serverless Inference:** sem custo parado. Cobra por tempo de
+  computação de cada invocação (proporcional à memória configurada, 1 GB por
+  padrão) e por volume de dados processados. Tráfego de estudo fica perto de
+  zero; confira o preço por GB-segundo na
+  [página de preços do SageMaker](https://aws.amazon.com/sagemaker/pricing/).
+- **O que evitar:** um endpoint de tempo real com instância (ex.: `ml.t2.medium`)
+  cobra **por hora, ligado o tempo todo** — na mesma ordem de grandeza de um
+  RDS pequeno. Foi por isso que o projeto usa o serverless.
+- **S3 de ML:** CSVs de histórico (expiram em 30 dias) e `model.tar.gz` de
+  poucos KB — centavos.
+- **Treino:** roda na sua máquina (`scripts/publish-model.sh`), sem custo AWS
+  além da invocação da Lambda `ops`.
+
 ## Como gastar o mínimo estudando
 
 1. Rode tudo localmente com `docker compose` — custo zero.

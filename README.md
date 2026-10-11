@@ -17,6 +17,7 @@ garantia tem um teste que a prova, e tudo roda localmente sem conta AWS.
 - [Arquitetura](#arquitetura)
 - [Rodando localmente](#rodando-localmente)
 - [Usando a API (curl)](#usando-a-api-curl)
+- [Recomendação de produtos (ML)](#recomendação-de-produtos-ml)
 - [Testes](#testes)
 - [Variáveis de ambiente](#variáveis-de-ambiente)
 - [Deploy na AWS](#deploy-na-aws)
@@ -36,8 +37,9 @@ garantia tem um teste que a prova, e tudo roda localmente sem conta AWS.
 | API | Express 5 em Node.js 24: cadastro/login com JWT, catálogo paginado com cache, pedidos transacionais e idempotentes, upload por URL pré-assinada |
 | Assíncrono | Transactional outbox → EventBridge (1 min) → SQS → worker idempotente com partial batch failure e DLQ |
 | Dados | PostgreSQL (RDS + RDS Proxy), Valkey/Redis (ElastiCache) com fallback, S3 privado |
-| IaC | 9 módulos Terraform, 3 ambientes com state separado, bootstrap de state + GitHub OIDC |
+| IaC | 10 módulos Terraform, 3 ambientes com state separado, bootstrap de state + GitHub OIDC |
 | CI/CD | Testes com Postgres/Redis reais, stack completa em docker compose, plan comentado no PR, deploy por plano salvo, migração e smoke test |
+| ML | Recomendação de produtos por filtragem colaborativa treinada no histórico de compras, servida por endpoint **SageMaker Serverless** e chamada pela Lambda da API, com fallback para os mais vendidos |
 | Observabilidade | Logs JSON com correlation/trace ID e redação de dados sensíveis, X-Ray, OpenTelemetry com collector sidecar, dashboard, alarmes e consultas salvas |
 
 ```
@@ -48,20 +50,24 @@ ecommerce-serverless/
 │   │   ├── server.js            # boot HTTP local
 │   │   ├── handlers/            # entradas Lambda: api, dispatcher, worker, ops
 │   │   ├── api/                 # rotas, middleware, schemas Joi
-│   │   ├── services/            # regras: auth, products, orders, outbox, notifications, uploads
+│   │   ├── services/            # regras: auth, products, orders, outbox, notifications, uploads, recommendations
+│   │   ├── recommender/         # cliente do modelo: SageMaker (AWS) ou HTTP (local)
 │   │   ├── db/ cache/           # pool pg + transação, migrator, cache-aside
 │   │   └── observability/       # logger pino, contexto (correlation id), OTel local
 │   ├── migrations/              # SQL versionado, aplicado em ordem
-│   ├── scripts/                 # migrate, seed, bootstrap-admin, local-jobs
+│   ├── scripts/                 # migrate, seed, seed-history, export-training-data, bootstrap-admin, local-jobs
 │   └── tests/                   # Jest + supertest contra Postgres/Redis reais
+├── ml/                          # recomendador em Python (só biblioteca padrão)
+│   ├── recommender/             # train.py, inference.py (handler SageMaker), serve.py (servidor local)
+│   └── tests/                   # unittest: treino, contrato de inferência, servidor HTTP
 ├── infrastructure/terraform/
 │   ├── main.tf …                # módulo raiz
-│   ├── modules/                 # networking, database, cache, storage, queue, iam, lambda, apigateway, monitoring
+│   ├── modules/                 # networking, database, cache, storage, queue, iam, lambda, apigateway, monitoring, recommender
 │   ├── environments/            # dev/staging/prod.tfvars + backend.hcl.example
 │   ├── bootstrap/               # bucket de state + OIDC (roda uma vez)
 │   └── tests/plan.tftest.hcl    # plan dos 3 ambientes com provider simulado
 ├── monitoring/                  # collector OTel, dashboard (template), consultas Logs Insights
-├── scripts/                     # build-lambda.sh, invoke-artifact.sh, smoke.mjs
+├── scripts/                     # build-lambda.sh, invoke-artifact.sh, smoke.mjs, smoke-recommendations.mjs, publish-model.sh
 ├── docs/                        # openapi.yaml, architecture.md, decisions.md, costs.md
 └── docker-compose.yml
 ```
@@ -79,6 +85,7 @@ flowchart LR
   disp --> proxy
   disp --> sqs[[SQS]] --> worker[Lambda worker] --> proxy
   sqs -.-> dlq[[DLQ]]
+  api -.->|InvokeEndpoint| sm[SageMaker<br/>endpoint serverless]
 ```
 
 Diagramas completos, fluxo de um pedido e tabela de garantias:
@@ -103,7 +110,7 @@ endpoints, RDS Proxy, outbox, Valkey, sidecar na Lambda…):
 git clone https://github.com/wasdevv/ecommerce-serverless.git
 cd ecommerce-serverless
 
-docker compose up -d --build --wait     # api, postgres, redis, otel-collector, sqs, s3
+docker compose up -d --build --wait     # api, postgres, redis, otel-collector, sqs, s3, recommender
 docker compose run --rm api npm run migrate
 docker compose run --rm api npm run seed  # 5 produtos fictícios
 docker compose up -d jobs               # dispatcher da outbox + worker (simula EventBridge + SQS)
@@ -122,6 +129,7 @@ O que cada serviço do compose representa na AWS:
 | `sqs` (ElasticMQ) | SQS + DLQ (mesma política: 5 tentativas) |
 | `s3` (MinIO) | bucket de uploads |
 | `otel-collector` | collector OpenTelemetry — o **sidecar** |
+| `recommender` (`ml/serve.py`) | endpoint SageMaker do recomendador (mesmo contrato `/ping` + `/invocations`) |
 
 ### Administrador local
 
@@ -184,6 +192,119 @@ Formato de erro (o mesmo em toda a API; 500 nunca leva detalhe interno):
              "correlationId": "meu-primeiro-pedido", "details": { "productId": "…", "available": 0 } } }
 ```
 
+## Recomendação de produtos (ML)
+
+`GET /api/v1/recommendations?limit=5` (autenticado) devolve produtos que o
+cliente provavelmente quer, com base no que **clientes parecidos** compraram.
+
+```mermaid
+flowchart LR
+  rds[(PostgreSQL<br/>order_items)] -->|ops: export-training-data<br/>usuário anonimizado| s3t[(S3 ml/training/)]
+  s3t --> train[ml/recommender/train.py<br/>similaridade item-item]
+  train -->|model.tar.gz| s3m[(S3 ml/models/versão/)]
+  s3m --> ep[SageMaker endpoint<br/>serverless, container scikit-learn]
+  api[Lambda api] -->|histórico do cliente| ep
+  ep -->|ids + score| api
+  api -->|preço/estoque atuais| rds
+```
+
+### Por que não é "fine-tuning"
+
+A ideia original era "fine-tunar um modelo". *Fine-tuning* é ajustar um modelo
+**já pré-treinado** (por exemplo, um LLM) com dados seus. Para recomendar a
+partir de histórico de compras, isso é a ferramenta errada: exigiria GPU, muito
+mais dados do que uma loja pequena tem, e o modelo não sabe nada útil sobre o
+**seu** catálogo antes do treino. O caminho clássico — e o que se usa de
+verdade em e-commerce como base — é **treinar do zero** um modelo de
+**filtragem colaborativa** com o histórico. É isso que o projeto faz. A troca
+está registrada em [docs/decisions.md](docs/decisions.md#recomendação-filtragem-colaborativa-e-não-fine-tuning).
+
+### Como o modelo funciona
+
+Dois produtos são parecidos quando **os mesmos clientes** compram os dois.
+Para cada par, a similaridade de cosseno é:
+
+```
+sim(i, j) = clientes que compraram i e j / √(compradores de i × compradores de j)
+```
+
+Exemplo do teste de contrato: 4 clientes compraram camiseta, 3 compraram
+moletom, e 3 compraram os dois → `3 / √(4×3) ≈ 0,87`. Para recomendar, soma-se
+a similaridade de cada produto do histórico do cliente com seus vizinhos,
+descartando o que ele já comprou. Pares vistos juntos por menos de 2 clientes
+(`--min-support`) são ignorados: com pouco dado, uma coincidência viraria
+similaridade 1,0.
+
+O "modelo" é uma tabela de vizinhos em JSON — dá para abrir e ler. O
+`model.tar.gz` tem o formato que o SageMaker espera (`model.json` +
+`code/inference.py`) e é **reprodutível**: os mesmos dados geram o mesmo
+arquivo, byte a byte, e a versão é o hash do conteúdo.
+
+### O que a API faz com a resposta
+
+| Situação | Resposta | `X-Recommendation-Source` |
+|---|---|---|
+| Cliente com histórico, modelo respondeu | vizinhos do modelo, completados com mais vendidos se faltar | `model` ou `model+popular` |
+| Cliente sem histórico (*cold start*) | mais vendidos com estoque | `popular` |
+| Modelo fora do ar, lento (> 800 ms) ou não configurado | mais vendidos com estoque | `popular` |
+
+O modelo só devolve **ids**. Preço e estoque vêm sempre do banco: produto sem
+estoque nunca é recomendado, mesmo que o modelo (treinado ontem) o sugira, e id
+desconhecido ou malformado é descartado antes da query.
+
+### Rodando localmente
+
+O compose sobe o `recommender`: o `ml/recommender/serve.py`, um servidor com o
+mesmo contrato HTTP do container do SageMaker. Sem modelo treinado ele
+responde 503 e a API usa os mais vendidos.
+
+```bash
+docker compose run --rm api npm run seed:history    # 18 clientes demo com padrões de compra
+docker compose run --rm -T api npm run -s export:training-data -- - \
+  | docker compose run --rm -T recommender python -m recommender.train - /opt/ml/model
+# model <versão>: <n> users, 5 products, 5 with neighbors -> /opt/ml/model/model.tar.gz
+
+node scripts/smoke-recommendations.mjs http://localhost:3000
+# recommendations -> 200 source=model+popular HOODIE-001 STICKER-001 MUG-001
+```
+
+O servidor relê o `model.json` quando ele muda — treinar de novo não exige
+reiniciar nada. Sem Docker, o mesmo fluxo roda com `python3` dentro de `ml/` (testado com 3.12 e 3.14):
+`python3 -m recommender.train <csv> model/` e
+`python3 -m recommender.serve --model-dir model`, com `RECOMMENDER_URL=http://localhost:8080` na API.
+
+### Na AWS
+
+O recomendador é **opcional** (`enable_recommender = false` por padrão) e sobe
+em duas fases, porque o SageMaker baixa o artefato no momento em que cria o
+endpoint — ele precisa existir no S3 antes:
+
+```bash
+# 1. liga o bucket de ML (ainda sem endpoint)
+terraform apply -var-file=environments/dev.tfvars -var enable_recommender=true
+
+# 2. exporta o histórico pela Lambda ops, treina na sua máquina e publica o artefato
+scripts/publish-model.sh dev
+# publicado: s3://<bucket>/models/<versão>/model.tar.gz
+
+# 3. cria (ou troca) o endpoint com a versão publicada
+terraform apply -var-file=environments/dev.tfvars \
+  -var enable_recommender=true -var recommender_model_version=<versão>
+```
+
+- **Endpoint serverless**: não há instância ligada; cobra por invocação. A troca é o *cold start* de alguns segundos depois de um tempo ocioso — a API corta em 800 ms (`RECOMMENDER_TIMEOUT_MS`) e responde com os mais vendidos.
+- **Nome estável**: o endpoint se chama `<projeto>-<ambiente>-recommender` em todas as versões. Uma versão nova troca só a configuração do endpoint; a Lambda não precisa de redeploy.
+- **Container oficial de scikit-learn** (`sagemaker-scikit-learn:1.2-1-cpu-py3`): ele já traz o servidor `/ping` + `/invocations` e carrega `code/inference.py` de dentro do `model.tar.gz`. Nada de imagem própria no ECR.
+- **IAM**: a Lambda `api` só pode `sagemaker:InvokeEndpoint` nesse endpoint; a `ops` só escreve em `training/`; o role do SageMaker só lê `models/`. O histórico exportado expira em 30 dias.
+- **Privacidade**: o export troca o id do cliente por um HMAC com sal aleatório **a cada export** — o modelo só precisa saber que duas compras são da mesma pessoa, e dois exports não podem ser cruzados entre si.
+
+### Limitações (de propósito, para caber num projeto de estudo)
+
+- **Retreino é manual** (`publish-model.sh`). O próximo passo natural é um job agendado: EventBridge → export → *SageMaker Training Job* (ou um Lambda/Fargate rodando o `train.py`) → publicação → atualização do endpoint.
+- **Sem avaliação offline.** Não há métrica como precisão@k num conjunto de teste separado; com os dados demo ela seria enganosa. Em produção, avalie antes de trocar a versão.
+- **Cliente novo recebe os mais vendidos**, e produto novo só aparece no modelo depois de ser comprado junto com outros por pelo menos 2 clientes.
+- **Não verificado numa conta AWS**: o endpoint, o container de scikit-learn carregando o `inference.py` e o `publish-model.sh` foram validados só pelo `terraform validate`/`test` (plan simulado). O contrato JSON em si é testado de ponta a ponta localmente.
+
 ## Testes
 
 ```bash
@@ -195,6 +316,8 @@ npm run lint
 TEST_DATABASE_URL=postgres://ecommerce:ecommerce@localhost:5432/ecommerce_test \
 TEST_REDIS_URL=redis://localhost:6379/15 \
 npm run test:coverage
+
+cd ../ml && python3 -m unittest discover -s tests -v   # recomendador (só biblioteca padrão)
 ```
 
 Os testes usam **PostgreSQL e Redis reais**, de propósito: o que mais importa
@@ -210,6 +333,7 @@ Alguns testes que valem a leitura:
 - `products.test.js` — Redis numa porta morta e o catálogo continua respondendo.
 - `observability.test.js` — 500 sem stack nem mensagem interna, mas com o correlation ID que acha a linha de log; nenhum password/token/email nos logs.
 - `handlers.test.js` — o handler Lambda recebendo eventos no formato real do API Gateway HTTP API.
+- `recommendations.test.js` — contrato Node ↔ Python sem simulação: exporta do PostgreSQL, treina com `train.py`, sobe o `serve.py` e a API passa de `popular` para `model`; modelo fora do ar vira fallback; id sem estoque ou malformado vindo do modelo é descartado.
 
 Infraestrutura:
 
@@ -223,7 +347,8 @@ terraform test                      # plan de dev/staging/prod com provider AWS 
 ```
 
 `terraform test` usa `mock_provider`: prova que a configuração resolve nos três
-perfis, que prod sem Multi-AZ é **recusado** e que ambiente inválido é recusado.
+perfis, que prod sem Multi-AZ é **recusado**, que ambiente inválido é recusado
+e que o endpoint de recomendação só existe depois que há um modelo publicado.
 Não prova que a AWS aceita os recursos — isso só um plan/apply real prova.
 
 ## Variáveis de ambiente
@@ -247,6 +372,10 @@ Não prova que a AWS aceita os recursos — isso só um plan/apply real prova.
 | `LOG_LEVEL` | info | info | Nível do pino |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | script | | Bootstrap de admin local |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD_SECRET_ARN` | | ops | Bootstrap de admin na AWS |
+| `RECOMMENDER_URL` | ✓ | | Servidor local do recomendador (`serve.py`) |
+| `RECOMMENDER_ENDPOINT_NAME` | | api | Endpoint SageMaker; sem ele e sem URL, só mais vendidos |
+| `RECOMMENDER_TIMEOUT_MS` | 800 | 800 | Tempo máximo esperando o modelo antes do fallback |
+| `ML_BUCKET` | | ops | Destino do export de histórico (`training/`) |
 
 `.env.example` tem os valores locais. Nenhum `.env` real é versionado.
 
@@ -374,6 +503,8 @@ para receber por email (confirme a assinatura do SNS).
 | Timeout conectando no banco | SG do Proxy só aceita o SG das Lambdas; Proxy exige TLS (`DB_SSL=true`) |
 | `password authentication failed` depois de dias funcionando | Rotação automática da senha do RDS (a cada 7 dias por padrão): a Lambda leu o segredo no cold start e guardou a senha antiga. Contorno imediato: forçar novos ambientes de execução (ex.: novo deploy ou `aws lambda update-function-configuration` mudando uma variável). Correção definitiva: IAM auth no RDS Proxy — ver [decisions.md](docs/decisions.md#segredos-fora-do-state-do-terraform) |
 | Lambda sem acesso a SQS/Secrets | Rota da sub-rede privada para o NAT; IAM do role da função |
+| `X-Recommendation-Source: popular` para quem tem histórico | Log `recommender unavailable, using fallback` (timeout, 503 sem modelo, erro de IAM). Na AWS: status do endpoint no console do SageMaker e logs em `/aws/sagemaker/Endpoints/<nome>`. Logo depois de ocioso, o primeiro pedido pode estourar os 800 ms (*cold start* do serverless) |
+| Endpoint SageMaker falha ao criar | O `model.tar.gz` não está em `models/<versão>/` — rode o `publish-model.sh` antes de preencher `recommender_model_version` |
 
 ## Recuperação de deploy e migrações
 
@@ -391,7 +522,7 @@ terraform destroy -var-file=environments/dev.tfvars
 
 - Em **prod**, `deletion_protection` do RDS impede o destroy: desligue com `db_deletion_protection = false`, aplique, e então destrua. Um snapshot final é criado.
 - Segredos de prod ficam 30 dias em janela de recuperação (dev/staging são apagados na hora).
-- O bucket de uploads só é esvaziado automaticamente em dev (`force_destroy`).
+- Os buckets de uploads e de ML só são esvaziados automaticamente em dev (`force_destroy`).
 - O **bootstrap** fica de pé (bucket com `prevent_destroy`). Para remover tudo, esvazie o bucket de state, remova o `lifecycle` e rode `terraform destroy` em `bootstrap/`.
 - Confira no Cost Explorer, no dia seguinte, que nada ficou cobrando.
 
@@ -401,7 +532,8 @@ Estimativa datada (us-east-1, 10/10/2026, **não é fatura**). Os preços
 unitários vêm de uma tabela de referência, **não** de consulta à AWS Pricing
 Calculator — confirme lá antes do primeiro apply:
 **dev ≈ US$ 90/mês (≈ US$ 0,12/h)**, **prod ≈ US$ 200/mês**. O que domina é o
-custo fixo de NAT, RDS Proxy, RDS e ElastiCache — não as Lambdas. Detalhamento,
+custo fixo de NAT, RDS Proxy, RDS e ElastiCache — não as Lambdas. O
+recomendador é serverless e opcional: não soma custo fixo por hora. Detalhamento,
 pressupostos e como estudar gastando centavos: [docs/costs.md](docs/costs.md).
 
 ## Cadastro no Swarm
@@ -424,6 +556,9 @@ botões de check/preview do Swarm, sugestão:
 | Consumidor idempotente + partial batch | `backend/src/services/notifications.js`, `handlers/worker.js` |
 | Cache que não derruba a API | `backend/src/cache/cache.js` |
 | Upload seguro direto ao S3 | `backend/src/services/uploads.js` |
+| Filtragem colaborativa e formato de modelo SageMaker | `ml/recommender/train.py`, `inference.py` |
+| Modelo como dependência opcional (timeout + fallback) | `backend/src/services/recommendations.js`, `src/recommender/client.js` |
+| Endpoint em duas fases, IAM por prefixo | `infrastructure/terraform/modules/recommender/main.tf` |
 | Logs estruturados e correlação | `backend/src/observability/` |
 | Segredos fora do state | `infrastructure/terraform/main.tf` (`ephemeral`, `secret_string_wo`) |
 | IAM mínimo por função | `infrastructure/terraform/modules/iam/main.tf` |
@@ -439,7 +574,7 @@ README por módulo em `infrastructure/terraform/modules/*/`.
 
 | Item | Situação |
 |---|---|
-| `npm ci`, lint, 59 testes, cobertura ≥ 80% nas 4 métricas | ✅ verificado localmente (Node 24.21, PostgreSQL 18, Redis 7.4) |
+| `npm ci`, lint, 69 testes, cobertura ≥ 80% nas 4 métricas | ✅ verificado localmente (Node 24.21, PostgreSQL 18, Redis 7.4) |
 | Build do zip + invoke do handler com evento API Gateway | ✅ verificado |
 | Smoke test contra a API local | ✅ verificado |
 | `terraform fmt`, `validate`, `test` (plan simulado × 3 ambientes) | ✅ verificado (Terraform 1.16.5, AWS provider 6.68) |
@@ -448,6 +583,10 @@ README por módulo em `infrastructure/terraform/modules/*/`.
 | Upload: conteúdo da URL assinada (chave no prefixo do usuário, tipo, tamanho máximo, validade) | ✅ verificado nos testes, decodificando a policy assinada |
 | Upload: envio real de um arquivo ao bucket (MinIO local ou S3) usando essa URL | ❌ não executado — o passo `curl -F file=@…` da seção de API está documentado, mas não foi rodado |
 | Traces no X-Ray / layer OpenTelemetry na Lambda | ❌ não verificado em conta real |
+| Recomendador: treino, contrato de inferência e `serve.py` (9 testes Python) | ✅ verificado localmente (Python 3.14) e no CI (job `ml`, Python 3.12) |
+| Recomendador ponta a ponta: export do PostgreSQL → `train.py` → `serve.py` → `GET /recommendations` passando de `popular` para `model` | ✅ verificado no Jest e manualmente com a API rodando |
+| Recomendador no `docker compose` (seed demo → export → treino → smoke) | ✅ verificado no CI (job `compose`) — Docker não estava disponível na máquina de desenvolvimento |
+| Endpoint SageMaker real, container scikit-learn carregando o `inference.py`, `publish-model.sh` | ❌ não executado — validado só por `terraform validate`/`test` |
 | Preços da estimativa de custos | ⚠️ tabela de referência, não consultada na AWS Pricing Calculator |
 
 ## Licença

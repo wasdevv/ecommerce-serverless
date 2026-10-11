@@ -330,6 +330,49 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /recommendations:
+    get:
+      summary: Produtos recomendados para o usuário autenticado
+      description: |
+        Com histórico de compras e o modelo disponível, os produtos vêm do
+        endpoint de recomendação (similaridade item-item), completados pelos
+        mais vendidos se faltar. Sem histórico, sem modelo configurado ou com o
+        modelo fora do ar/lento, só os mais vendidos. Nunca inclui produto sem
+        estoque nem produto que o usuário já comprou.
+      security: [{ bearer: [] }]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Recommendation-Source:
+              description: Origem da lista.
+              schema: { type: string, enum: [model, model+popular, popular] }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        sku: { type: string }
+                        name: { type: string }
+                        description: { type: string }
+                        priceCents: { type: integer }
+                        stock: { type: integer }
+                        score:
+                          type: [number, "null"]
+                          description: Similaridade somada vinda do modelo; null quando o item veio dos mais vendidos.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /uploads/presign:
     post:
       summary: Gera POST pré-assinado para o bucket privado

@@ -13,7 +13,7 @@ locals {
       handler = "src/handlers/api.handler"
       timeout = 15
       memory  = var.api_memory_mb
-      env     = {}
+      env     = var.recommender_endpoint_name == null ? {} : { RECOMMENDER_ENDPOINT_NAME = var.recommender_endpoint_name }
     }
     dispatcher = {
       handler = "src/handlers/dispatcher.handler"
@@ -31,10 +31,13 @@ locals {
       handler = "src/handlers/ops.handler"
       timeout = 300
       memory  = 256
-      env = {
-        ADMIN_EMAIL               = var.admin_email
-        ADMIN_PASSWORD_SECRET_ARN = var.admin_password_secret_arn
-      }
+      env = merge(
+        {
+          ADMIN_EMAIL               = var.admin_email
+          ADMIN_PASSWORD_SECRET_ARN = var.admin_password_secret_arn
+        },
+        var.ml_bucket == null ? {} : { ML_BUCKET = var.ml_bucket },
+      )
     }
   }
 

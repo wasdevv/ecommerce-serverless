@@ -3,6 +3,8 @@
 #   dispatcher -> lê segredo de DB, envia para a fila
 #   worker     -> lê segredo de DB, consome a fila
 #   ops        -> lê segredos de DB e do admin bootstrap
+# Com o recomendador ligado: api invoca o endpoint SageMaker, ops grava o
+# export de histórico em training/ no bucket de ML.
 # Comum a todos: escrever no próprio log group, ENIs da VPC e X-Ray.
 
 data "aws_caller_identity" "current" {}
@@ -15,13 +17,22 @@ locals {
 
   log_group_arn = { for f in local.functions : f => "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/lambda/${var.name}-${f}:*" }
 
+  # ARN do endpoint montado a partir do nome (conhecido no plan); a AWS usa o
+  # nome em minúsculas no ARN.
+  recommender = var.recommender_endpoint_name == null ? [] : [
+    { actions = ["sagemaker:InvokeEndpoint"], resources = ["arn:aws:sagemaker:${local.region}:${local.account_id}:endpoint/${lower(var.recommender_endpoint_name)}"] },
+  ]
+  training_export = var.ml_bucket_arn == null ? [] : [
+    { actions = ["s3:PutObject"], resources = ["${var.ml_bucket_arn}/training/*"] },
+  ]
+
   specific = {
-    api = [
+    api = concat([
       { actions = ["secretsmanager:GetSecretValue"], resources = [var.db_secret_arn, var.jwt_secret_arn] },
       # A URL pré-assinada carrega a permissão de quem assina: sem este
       # PutObject o S3 recusaria o upload do cliente.
       { actions = ["s3:PutObject"], resources = ["${var.uploads_bucket_arn}/users/*"] },
-    ]
+    ], local.recommender)
     dispatcher = [
       { actions = ["secretsmanager:GetSecretValue"], resources = [var.db_secret_arn] },
       { actions = ["sqs:SendMessage"], resources = [var.queue_arn] },
@@ -30,9 +41,9 @@ locals {
       { actions = ["secretsmanager:GetSecretValue"], resources = [var.db_secret_arn] },
       { actions = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"], resources = [var.queue_arn] },
     ]
-    ops = [
+    ops = concat([
       { actions = ["secretsmanager:GetSecretValue"], resources = [var.db_secret_arn, var.admin_password_secret_arn] },
-    ]
+    ], local.training_export)
   }
 }
 

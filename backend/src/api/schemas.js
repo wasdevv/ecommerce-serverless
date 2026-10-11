@@ -52,6 +52,9 @@ module.exports = {
       .unique('productId')
       .required(),
   }),
+  recommendations: Joi.object({
+    limit: Joi.number().integer().min(1).max(20).default(5),
+  }),
   idempotencyKey: Joi.string().pattern(/^[A-Za-z0-9._:-]{8,128}$/).required(),
   // Sem campo de chave/caminho: o servidor decide onde o arquivo vai.
   uploadPresign: (maxBytes) =>

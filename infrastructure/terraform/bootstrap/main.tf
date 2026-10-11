@@ -205,7 +205,7 @@ data "aws_iam_policy_document" "deploy" {
     actions = [
       "apigateway:*", "cloudwatch:*", "ec2:*", "elasticache:*", "events:*",
       "lambda:*", "logs:*", "rds:*", "s3:*", "secretsmanager:*", "sns:*",
-      "sqs:*", "xray:*", "kms:DescribeKey", "kms:Decrypt", "kms:CreateGrant",
+      "sqs:*", "xray:*", "sagemaker:*", "kms:DescribeKey", "kms:Decrypt", "kms:CreateGrant",
       "sts:GetCallerIdentity", "iam:CreateServiceLinkedRole",
     ]
     resources = ["*"]

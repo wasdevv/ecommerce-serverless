@@ -32,3 +32,15 @@ variable "uploads_bucket_arn" {
   description = "Bucket de uploads."
   type        = string
 }
+
+variable "recommender_endpoint_name" {
+  description = "Endpoint SageMaker que a API pode invocar (null = sem recomendador)."
+  type        = string
+  default     = null
+}
+
+variable "ml_bucket_arn" {
+  description = "Bucket de ML onde a ops grava o export de histórico (null = sem recomendador)."
+  type        = string
+  default     = null
+}

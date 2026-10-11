@@ -119,3 +119,15 @@ variable "adot_layer_arn" {
   type        = string
   default     = ""
 }
+
+variable "recommender_endpoint_name" {
+  description = "Endpoint SageMaker de recomendação (null = API usa só os mais vendidos)."
+  type        = string
+  default     = null
+}
+
+variable "ml_bucket" {
+  description = "Bucket de ML para o export de histórico da função ops (null = ação desabilitada)."
+  type        = string
+  default     = null
+}

@@ -98,6 +98,25 @@ module "queue" {
   visibility_timeout_seconds = 180
 }
 
+# Recomendador (opcional): bucket de ML sempre que ligado; modelo e endpoint
+# SageMaker só depois que um model.tar.gz foi publicado em models/<versão>/.
+module "recommender" {
+  count           = var.enable_recommender ? 1 : 0
+  source          = "./modules/recommender"
+  name            = local.name
+  iam_path        = local.iam_path
+  model_version   = var.recommender_model_version
+  memory_size_mb  = var.recommender_memory_mb
+  max_concurrency = var.recommender_max_concurrency
+  force_destroy   = var.environment == "dev"
+}
+
+locals {
+  recommender_endpoint_name = try(module.recommender[0].endpoint_name, null)
+  ml_bucket_name            = try(module.recommender[0].bucket_name, null)
+  ml_bucket_arn             = try(module.recommender[0].bucket_arn, null)
+}
+
 module "iam" {
   source                    = "./modules/iam"
   name                      = local.name
@@ -107,6 +126,8 @@ module "iam" {
   admin_password_secret_arn = aws_secretsmanager_secret.admin_password.arn
   queue_arn                 = module.queue.queue_arn
   uploads_bucket_arn        = module.storage.bucket_arn
+  recommender_endpoint_name = local.recommender_endpoint_name
+  ml_bucket_arn             = local.ml_bucket_arn
 }
 
 module "lambda" {
@@ -132,6 +153,8 @@ module "lambda" {
   worker_timeout_seconds    = 30
   log_retention_days        = var.log_retention_days
   adot_layer_arn            = var.adot_layer_arn
+  recommender_endpoint_name = local.recommender_endpoint_name
+  ml_bucket                 = local.ml_bucket_name
 }
 
 module "apigateway" {

@@ -30,6 +30,10 @@ flowchart LR
   sqs -->|event source mapping<br/>partial batch response| worker
   sqs -.->|5 falhas| dlq[[SQS DLQ]]
 
+  api -.->|InvokeEndpoint<br/>timeout 800 ms| rec[SageMaker endpoint<br/>serverless, opcional]
+  ops -.->|export anonimizado| ml[(S3 ml<br/>training/ · models/)]
+  ml -.->|model.tar.gz| rec
+
   sm[Secrets Manager] -.-> api & disp & worker & ops
   api & disp & worker -.->|traces| xray[X-Ray]
   api & disp & worker -.->|logs JSON| cw[CloudWatch Logs<br/>dashboard + alarmes]
@@ -79,6 +83,26 @@ sequenceDiagram
 | Mensagem ruim não trava o lote | partial batch response → DLQ após 5 tentativas | `jobs.test.js` + `ReportBatchItemFailures` no Terraform |
 | Pedido alheio invisível | filtro `user_id` na query; 404 igual a inexistente | `orders.test.js` |
 | Catálogo sobrevive ao Redis | cache-aside que trata erro como miss, timeouts curtos | `products.test.js` — Redis numa porta morta |
+| Recomendação sobrevive ao modelo | timeout de 800 ms + fallback para mais vendidos; header diz a origem | `recommendations.test.js` — modelo lançando erro, servidor sem modelo (503) |
+| Recomendação nunca oferece o que não dá para vender | ids do modelo filtrados por UUID válido e `stock > 0` no banco | `recommendations.test.js` |
+
+## Recomendação de produtos
+
+O modelo (tabela de vizinhos item-item) é treinado pelo `ml/recommender/train.py`
+e empacotado como `model.tar.gz` com `code/inference.py` — o formato que o
+container de scikit-learn do SageMaker carrega. O mesmo `inference.py` roda no
+`serve.py` local, então o contrato JSON testado localmente é o que o endpoint
+recebe:
+
+```
+POST /invocations  {"productIds": ["<uuid>", ...], "k": 10}
+200                {"recommendations": [{"productId": "<uuid>", "score": 0.87}], "modelVersion": "1072f23be992"}
+```
+
+O endpoint não está na VPC (endpoints serverless não suportam VPC): a Lambda
+`api` chega nele pela API pública do SageMaker Runtime, via NAT, autenticada
+por IAM. O fluxo de treino e as limitações estão no
+[README](../README.md#recomendação-de-produtos-ml).
 
 ## Observabilidade e o "sidecar"
 

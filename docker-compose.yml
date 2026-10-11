@@ -1,10 +1,17 @@
 # Ambiente local completo: API + PostgreSQL + Redis + collector OpenTelemetry
-# (sidecar) + emuladores de SQS (ElasticMQ) e S3 (MinIO). Nenhuma credencial
-# AWS real é usada aqui.
+# (sidecar) + emuladores de SQS (ElasticMQ) e S3 (MinIO) + servidor do
+# recomendador (mesmo contrato do endpoint SageMaker). Nenhuma credencial AWS
+# real é usada aqui.
 #
 #   docker compose up -d --build --wait
 #   docker compose run --rm api npm run migrate
 #   docker compose run --rm api npm run seed
+#
+# Recomendação (opcional): histórico demo -> export -> treino. O serve.py
+# recarrega o modelo sozinho.
+#   docker compose run --rm api npm run seed:history
+#   docker compose run --rm -T api npm run -s export:training-data -- - \
+#     | docker compose run --rm -T recommender python -m recommender.train - /opt/ml/model
 
 x-app-env: &app-env
   APP_ENV: local
@@ -23,6 +30,8 @@ x-app-env: &app-env
   OTEL_SERVICE_NAME: ecommerce-api
   # O "sidecar": o app só conhece localhost-equivalente do collector, nunca o backend de traces.
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  # Na AWS é RECOMMENDER_ENDPOINT_NAME (SageMaker); aqui, o serve.py.
+  RECOMMENDER_URL: http://recommender:8080
 
 services:
   api:
@@ -44,6 +53,11 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       sqs: { condition: service_started }
+
+  recommender:
+    build: ./ml
+    ports: ["8080:8080"]
+    volumes: [mlmodel:/opt/ml/model]
 
   postgres:
     image: postgres:17-alpine
@@ -97,3 +111,4 @@ services:
 
 volumes:
   pgdata:
+  mlmodel:

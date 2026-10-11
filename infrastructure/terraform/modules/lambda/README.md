@@ -48,6 +48,8 @@ Layer de dependências, quatro funções (api, dispatcher, worker, ops) a partir
 | architecture | arm64 (Graviton, ~20% mais barato por GB-s) ou x86\_64. | `string` | `"arm64"` | no |
 | log\_level | Nível de log do pino. | `string` | `"info"` | no |
 | log\_retention\_days | Retenção dos log groups. | `number` | `14` | no |
+| ml\_bucket | Bucket de ML para o export de histórico da função ops (null = ação desabilitada). | `string` | `null` | no |
+| recommender\_endpoint\_name | Endpoint SageMaker de recomendação (null = API usa só os mais vendidos). | `string` | `null` | no |
 | runtime | Runtime Node.js da Lambda. | `string` | `"nodejs24.x"` | no |
 | worker\_timeout\_seconds | Timeout do worker; a visibilidade da fila deve ser >= 6x este valor. | `number` | `30` | no |
 

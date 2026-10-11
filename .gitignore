@@ -24,3 +24,8 @@ crash.log
 
 .DS_Store
 *.log
+
+# Recomendador: dados exportados e modelos treinados localmente.
+ml/data/
+ml/model/
+__pycache__/

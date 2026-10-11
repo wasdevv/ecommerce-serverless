@@ -7,10 +7,12 @@ const { AuthService } = require('./services/auth');
 const { ProductService } = require('./services/products');
 const { OrderService } = require('./services/orders');
 const { UploadService } = require('./services/uploads');
+const { RecommendationService } = require('./services/recommendations');
+const { createRecommender } = require('./recommender/client');
 
 // Monta o app a partir das dependências já construídas. Não abre porta: o
 // server.js (local) e o handlers/api.js (Lambda) decidem como servir.
-function createApp({ config, db, cache, s3, log = defaultLogger }) {
+function createApp({ config, db, cache, s3, recommender = createRecommender(config.recommender), log = defaultLogger }) {
   const authService = new AuthService({ db, jwtConfig: config.jwt });
   const deps = {
     authService,
@@ -18,6 +20,7 @@ function createApp({ config, db, cache, s3, log = defaultLogger }) {
     orderService: new OrderService({ db }),
     uploadService: new UploadService({ uploadsConfig: config.uploads, s3 }),
     uploadsConfig: config.uploads,
+    recommendationService: new RecommendationService({ db, cache, recommender, log }),
   };
 
   const app = express();
@@ -41,6 +44,7 @@ function createApp({ config, db, cache, s3, log = defaultLogger }) {
   api.use('/products', mount, require('./api/routes/products')(deps));
   api.use('/orders', mount, require('./api/routes/orders')(deps));
   api.use('/uploads', mount, require('./api/routes/uploads')(deps));
+  api.use('/recommendations', mount, require('./api/routes/recommendations')(deps));
 
   app.use('/api/v1', api);
   app.use(notFoundHandler);

@@ -31,6 +31,16 @@ output "uploads_bucket" {
   value       = module.storage.bucket_name
 }
 
+output "ml_bucket" {
+  description = "Bucket de ML: histórico exportado em training/, modelos em models/<versão>/ (null sem enable_recommender)."
+  value       = local.ml_bucket_name
+}
+
+output "recommender_endpoint_name" {
+  description = "Endpoint SageMaker usado pela API (null até haver recommender_model_version)."
+  value       = local.recommender_endpoint_name
+}
+
 output "admin_password_secret_arn" {
   description = "ARN do segredo com a senha do admin bootstrap (o valor não é exposto)."
   value       = aws_secretsmanager_secret.admin_password.arn

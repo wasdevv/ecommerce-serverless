@@ -3,7 +3,9 @@
 const { GetSecretValueCommand, SecretsManagerClient } = require('@aws-sdk/client-secrets-manager');
 const { getRuntime } = require('../runtime');
 const { migrate } = require('../db/migrate');
+const { PutObjectCommand, S3Client } = require('@aws-sdk/client-s3');
 const { upsertAdmin } = require('../services/auth');
+const { exportTrainingData } = require('../services/recommendations');
 const { logger } = require('../observability/logger');
 
 // Lambda de operação, sem rota HTTP: só quem tem lambda:InvokeFunction (o
@@ -36,6 +38,16 @@ const ACTIONS = {
        RETURNING id`,
     );
     return { productId: rows[0].id };
+  },
+
+  // Histórico de compras para o treino do recomendador. O RDS é privado; esta
+  // ação é o jeito de tirar os dados de lá, já anonimizados, para o bucket de ML.
+  async 'export-training-data'({ db, config }) {
+    if (!config.ml.bucket) throw new Error('ML_BUCKET must be configured');
+    const { csv, rows } = await exportTrainingData(db);
+    const key = `training/order_items-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+    await new S3Client({}).send(new PutObjectCommand({ Bucket: config.ml.bucket, Key: key, Body: csv, ContentType: 'text/csv' }));
+    return { rows, uri: `s3://${config.ml.bucket}/${key}` };
   },
 };
 

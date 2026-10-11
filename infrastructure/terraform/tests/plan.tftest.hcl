@@ -24,6 +24,9 @@ mock_provider "aws" {
       master_user_secret = [{ secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds-db", kms_key_id = "", secret_status = "active" }]
     }
   }
+  mock_data "aws_sagemaker_prebuilt_ecr_image" {
+    defaults = { registry_path = "683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3" }
+  }
   mock_resource "aws_lambda_function" {
     defaults = { invoke_arn = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:123456789012:function:x/invocations" }
   }
@@ -50,6 +53,49 @@ run "dev_is_single_az_and_cheap" {
     condition     = length(module.lambda.function_names) == 4
     error_message = "esperadas 4 funções: api, dispatcher, worker, ops"
   }
+  assert {
+    condition     = length(module.recommender) == 0 && output.recommender_endpoint_name == null
+    error_message = "recomendador é opt-in: sem enable_recommender não há bucket nem endpoint"
+  }
+}
+
+run "recommender_waits_for_a_published_model" {
+  command = plan
+  variables {
+    environment        = "dev"
+    enable_recommender = true
+  }
+  assert {
+    condition     = output.ml_bucket == "ecommerce-serverless-dev-ml-123456789012"
+    error_message = "bucket de ML deve existir assim que o recomendador é ligado"
+  }
+  assert {
+    condition     = output.recommender_endpoint_name == null
+    error_message = "sem model_version não pode haver endpoint (o SageMaker falharia ao baixar o artefato)"
+  }
+}
+
+run "recommender_endpoint_with_model_version" {
+  command = plan
+  variables {
+    environment               = "dev"
+    enable_recommender        = true
+    recommender_model_version = "2304ffdab9fb"
+  }
+  assert {
+    condition     = output.recommender_endpoint_name == "ecommerce-serverless-dev-recommender"
+    error_message = "endpoint deve ter nome estável entre versões do modelo"
+  }
+}
+
+run "recommender_rejects_path_like_versions" {
+  command = plan
+  variables {
+    environment               = "dev"
+    enable_recommender        = true
+    recommender_model_version = "../training"
+  }
+  expect_failures = [var.recommender_model_version]
 }
 
 run "prod_is_multi_az" {

@@ -109,6 +109,34 @@ variable "adot_layer_arn" {
   default     = ""
 }
 
+variable "enable_recommender" {
+  description = "Cria o bucket de ML e, com recommender_model_version, o endpoint SageMaker de recomendação."
+  type        = bool
+  default     = false
+}
+
+variable "recommender_model_version" {
+  description = "Versão publicada em s3://<bucket de ML>/models/<versão>/model.tar.gz (vazio = sem endpoint)."
+  type        = string
+  default     = ""
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]*$", var.recommender_model_version))
+    error_message = "recommender_model_version aceita só letras, números, ponto, hífen e sublinhado."
+  }
+}
+
+variable "recommender_memory_mb" {
+  description = "Memória do endpoint serverless de recomendação."
+  type        = number
+  default     = 1024
+}
+
+variable "recommender_max_concurrency" {
+  description = "Invocações simultâneas máximas do endpoint de recomendação."
+  type        = number
+  default     = 2
+}
+
 variable "secrets_version" {
   description = "Incremente para rotacionar JWT e senha do admin (write-only: o Terraform só reescreve quando a versão muda)."
   type        = number

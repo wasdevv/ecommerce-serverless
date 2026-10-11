@@ -121,6 +121,16 @@ na Lambda, configure `adot_layer_arn` com a layer OpenTelemetry para Node.js
 próprio bucket — sem tabela DynamoDB. Cada ambiente tem seu `key`, e o role de
 deploy de um ambiente só consegue escrever no prefixo dele.
 
+## Recomendação: filtragem colaborativa, e não fine-tuning
+
+- **Contexto:** a proposta era "fine-tunar um modelo para recomendar com base no histórico do usuário", servido por um endpoint SageMaker e chamado pela Lambda.
+- **Decisão:** treinar **do zero** um modelo de filtragem colaborativa item-item (similaridade de cosseno entre produtos comprados pelos mesmos clientes) e servi-lo num endpoint **SageMaker Serverless Inference** com o container oficial de scikit-learn. Lambda e endpoint seguem o desenho proposto; o que muda é o tipo de modelo.
+- **Por quê:** *fine-tuning* ajusta um modelo pré-treinado (um LLM, por exemplo) — exige GPU, volume de dados que uma loja de estudo não tem, e o modelo de partida não sabe nada sobre este catálogo. Filtragem colaborativa é a base clássica de recomendação em e-commerce, treina em milissegundos, cabe na biblioteca padrão do Python e o resultado é uma tabela que dá para ler e conferir à mão.
+- **Endpoint serverless em vez de instância:** um endpoint de tempo real com instância cobra por hora, 24 h por dia, com ou sem tráfego. O serverless cobra por invocação; o preço é o *cold start* depois de ocioso, absorvido por timeout curto (800 ms) e fallback para os mais vendidos.
+- **Modelo é dependência opcional:** recomendação nunca derruba a requisição. Sem histórico, sem modelo configurado, com o endpoint fora ou lento, a API responde com os mais vendidos e diz isso em `X-Recommendation-Source`.
+- **Treino fora da AWS (por enquanto):** a Lambda `ops` exporta o histórico anonimizado para o S3 e o treino roda na máquina de quem opera (`scripts/publish-model.sh`). Um *SageMaker Training Job* agendado é a evolução; ficou de fora para manter o fluxo legível.
+- **Custo:** mais um serviço e um bucket por ambiente; o cliente novo e o produto novo (*cold start* de dados) só recebem/entram em recomendação depois de compras; sem avaliação offline (precisão@k) — com dados demo ela seria enganosa.
+
 ## Fora do escopo (de propósito)
 
 Frontend, pagamento real/Stripe/webhooks, email real, Datadog, múltiplas

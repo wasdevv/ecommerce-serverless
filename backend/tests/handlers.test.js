@@ -99,5 +99,6 @@ describe('ops handler', () => {
     await expect(ops.handler({ action: 'drop-database' })).rejects.toThrow(/unknown action/);
     await expect(ops.handler({})).rejects.toThrow(/unknown action/);
     await expect(ops.handler({ action: 'bootstrap-admin' })).rejects.toThrow(/ADMIN_EMAIL/);
+    await expect(ops.handler({ action: 'export-training-data' })).rejects.toThrow(/ML_BUCKET/);
   });
 });
