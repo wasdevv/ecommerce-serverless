@@ -104,9 +104,15 @@ jobs:
       # Plan dos três ambientes contra provider AWS simulado (ver tests/plan.tftest.hcl).
       - run: terraform test
       - run: terraform -chdir=bootstrap init -backend=false -input=false && terraform -chdir=bootstrap validate
+      # Mesmo binário que gera os READMEs localmente; --output-check falha se
+      # algum README de módulo estiver desatualizado em relação ao código.
       - name: Terraform docs are up to date
-        uses: terraform-docs/gh-actions@v1.4.1
-        with:
-          working-dir: infrastructure/terraform,infrastructure/terraform/bootstrap,infrastructure/terraform/modules/apigateway,infrastructure/terraform/modules/cache,infrastructure/terraform/modules/database,infrastructure/terraform/modules/iam,infrastructure/terraform/modules/lambda,infrastructure/terraform/modules/monitoring,infrastructure/terraform/modules/networking,infrastructure/terraform/modules/queue,infrastructure/terraform/modules/storage
-          config-file: infrastructure/terraform/.terraform-docs.yml
-          fail-on-diff: true
+        env:
+          TFDOCS_VERSION: v0.24.0
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TFDOCS_VERSION" -R terraform-docs/terraform-docs \
+            -p "terraform-docs-$TFDOCS_VERSION-linux-amd64.tar.gz" -O - | tar xz -C /tmp terraform-docs
+          for d in . bootstrap modules/*; do
+            /tmp/terraform-docs -c .terraform-docs.yml --output-check "$d"
+          done
