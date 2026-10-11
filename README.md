@@ -440,7 +440,7 @@ README por módulo em `infrastructure/terraform/modules/*/`.
 | Build do zip + invoke do handler com evento API Gateway | ✅ verificado |
 | Smoke test contra a API local | ✅ verificado |
 | `terraform fmt`, `validate`, `test` (plan simulado × 3 ambientes) | ✅ verificado (Terraform 1.16.5, AWS provider 6.68) |
-| Build da imagem Docker / `docker compose` completo | ⏳ não rodado na máquina de desenvolvimento (sem Docker); coberto pelo job `compose` do CI |
+| Build da imagem Docker + `docker compose` completo + smoke + evento chegando ao worker com o mesmo correlation ID + spans no collector | ✅ verificado no CI (job `compose`) |
 | `terraform plan`/`apply` real, migração e smoke na AWS | ❌ não executado — exige conta AWS configurada |
 | Traces no X-Ray / layer OpenTelemetry na Lambda | ❌ não verificado em conta real |
 
