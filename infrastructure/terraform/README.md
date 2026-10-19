@@ -37,6 +37,7 @@ Módulo raiz: compõe os módulos de `modules/` por ambiente (`environments/*.tf
 | Name | Type |
 | ---- | ---- |
 | [aws_secretsmanager_secret.admin_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+| [aws_secretsmanager_secret.anthropic_api_key](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_secretsmanager_secret.jwt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_secretsmanager_secret_version.admin_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
 | [aws_secretsmanager_secret_version.jwt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
@@ -51,6 +52,7 @@ Módulo raiz: compõe os módulos de `modules/` por ambiente (`environments/*.tf
 | alarm\_email | Email para alarmes (vazio = sem assinatura). | `string` | `""` | no |
 | api\_memory\_mb | Memória da função API. | `number` | `512` | no |
 | artifacts\_dir | Diretório com function.zip e layer.zip (gerados por scripts/build-lambda.sh). | `string` | `"../../build"` | no |
+| assistant\_model | Modelo Claude que gera as respostas do assistente. | `string` | `"claude-opus-5-5"` | no |
 | aws\_region | Região AWS. | `string` | `"us-east-1"` | no |
 | cache\_node\_type | Tipo de nó ElastiCache. | `string` | `"cache.t4g.micro"` | no |
 | cache\_nodes | Nós de cache (2+ = réplica com failover). | `number` | `1` | no |
@@ -59,6 +61,8 @@ Módulo raiz: compõe os módulos de `modules/` por ambiente (`environments/*.tf
 | db\_deletion\_protection | Proteção contra destroy do RDS. | `bool` | `false` | no |
 | db\_instance\_class | Classe da instância RDS. | `string` | `"db.t4g.micro"` | no |
 | db\_multi\_az | RDS Multi-AZ. Em prod a validação em main.tf exige true. | `bool` | `false` | no |
+| embeddings\_model\_id | Modelo de embeddings no Bedrock (precisa de acesso liberado na conta, na região do deploy). | `string` | `"amazon.titan-embed-text-v2:0"` | no |
+| enable\_assistant | Liga o assistente com LLM: cria o segredo da chave da Anthropic e usa embeddings do Bedrock (Titan). | `bool` | `false` | no |
 | enable\_recommender | Cria o bucket de ML e, com recommender\_model\_version, o endpoint SageMaker de recomendação. | `bool` | `false` | no |
 | lambda\_architecture | Arquitetura das Lambdas. | `string` | `"arm64"` | no |
 | log\_retention\_days | Retenção de logs. | `number` | `14` | no |
@@ -76,6 +80,7 @@ Módulo raiz: compõe os módulos de `modules/` por ambiente (`environments/*.tf
 | ---- | ----------- |
 | admin\_password\_secret\_arn | ARN do segredo com a senha do admin bootstrap (o valor não é exposto). |
 | api\_endpoint | URL base da API (acrescente /api/v1). |
+| assistant\_secret\_arn | Segredo onde gravar a chave da Anthropic (null sem enable\_assistant). O valor nunca sai do Secrets Manager. |
 | dashboard\_url | Link do dashboard CloudWatch. |
 | db\_multi\_az | Se o RDS tem standby Multi-AZ. |
 | function\_names | Nomes das funções Lambda. |

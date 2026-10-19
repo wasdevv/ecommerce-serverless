@@ -137,6 +137,24 @@ variable "recommender_max_concurrency" {
   default     = 2
 }
 
+variable "enable_assistant" {
+  description = "Liga o assistente com LLM: cria o segredo da chave da Anthropic e usa embeddings do Bedrock (Titan)."
+  type        = bool
+  default     = false
+}
+
+variable "assistant_model" {
+  description = "Modelo Claude que gera as respostas do assistente."
+  type        = string
+  default     = "claude-opus-5-5"
+}
+
+variable "embeddings_model_id" {
+  description = "Modelo de embeddings no Bedrock (precisa de acesso liberado na conta, na região do deploy)."
+  type        = string
+  default     = "amazon.titan-embed-text-v2:0"
+}
+
 variable "secrets_version" {
   description = "Incremente para rotacionar JWT e senha do admin (write-only: o Terraform só reescreve quando a versão muda)."
   type        = number

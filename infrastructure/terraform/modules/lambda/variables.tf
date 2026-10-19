@@ -126,6 +126,24 @@ variable "recommender_endpoint_name" {
   default     = null
 }
 
+variable "assistant_secret_arn" {
+  description = "Segredo com a chave da Anthropic (null = assistente responde só com a busca)."
+  type        = string
+  default     = null
+}
+
+variable "assistant_model" {
+  description = "Modelo Claude do assistente."
+  type        = string
+  default     = "claude-opus-5-5"
+}
+
+variable "embeddings_model_id" {
+  description = "Modelo de embeddings do Bedrock para api e ops (null = hashing local)."
+  type        = string
+  default     = null
+}
+
 variable "ml_bucket" {
   description = "Bucket de ML para o export de histórico da função ops (null = ação desabilitada)."
   type        = string

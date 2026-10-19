@@ -40,7 +40,27 @@ describe('resolveConfig', () => {
     await expect(resolveConfig({ secrets: fakeSecrets({}) })).rejects.toThrow(/JWT_SECRET/);
   });
 
+  it('reads the Anthropic key from Secrets Manager and tolerates a secret with no value yet', async () => {
+    process.env.ANTHROPIC_API_KEY_SECRET_ARN = 'arn:anthropic';
+    const config = await resolveConfig({ secrets: fakeSecrets({ 'arn:anthropic': 'sk-test' }) });
+    expect(config.assistant.apiKey).toBe('sk-test');
+
+    resetConfig();
+    const empty = {
+      async send() {
+        throw new Error('ResourceNotFoundException: no secret value');
+      },
+    };
+    await expect(resolveConfig({ secrets: empty })).resolves.toMatchObject({ assistant: { apiKey: undefined } });
+  });
+
   it('parses typed env vars and rejects garbage', () => {
+    process.env.ASSISTANT_MIN_VECTOR_SCORE = '0.35';
+    expect(baseConfig().assistant.retrieval.minVectorScore).toBe(0.35);
+    process.env.ASSISTANT_MIN_VECTOR_SCORE = 'high';
+    expect(() => baseConfig()).toThrow(/ASSISTANT_MIN_VECTOR_SCORE/);
+    delete process.env.ASSISTANT_MIN_VECTOR_SCORE;
+
     process.env.DB_POOL_MAX = '2';
     process.env.DB_SSL = 'true';
     expect(baseConfig().database).toMatchObject({ poolMax: 2, ssl: true });

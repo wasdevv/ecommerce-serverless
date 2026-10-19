@@ -11,3 +11,7 @@ process.env.UPLOADS_BUCKET = 'test-uploads-bucket';
 process.env.AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 process.env.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || 'test';
 process.env.AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || 'test';
+// Nunca chamar a API da Anthropic de verdade na suíte, mesmo com a chave no shell.
+process.env.ANTHROPIC_API_KEY = '';
+process.env.ANTHROPIC_API_KEY_SECRET_ARN = '';
+process.env.EMBEDDINGS_PROVIDER = 'hashing';

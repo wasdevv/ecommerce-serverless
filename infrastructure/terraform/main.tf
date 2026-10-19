@@ -51,6 +51,23 @@ resource "aws_secretsmanager_secret_version" "admin_password" {
   secret_string_wo_version = var.secrets_version
 }
 
+# Chave da API da Anthropic para o assistente. O Terraform cria só o
+# contêiner: o valor entra por fora (aws secretsmanager put-secret-value) e
+# nunca passa pelo state nem pelo repositório. Sem valor, o assistente
+# responde só com a busca, sem LLM.
+resource "aws_secretsmanager_secret" "anthropic_api_key" {
+  count                   = var.enable_assistant ? 1 : 0
+  name                    = "${local.name}/anthropic-api-key"
+  description             = "Anthropic API key for the shopping assistant (set out of band)"
+  recovery_window_in_days = var.environment == "prod" ? 30 : 0
+}
+
+locals {
+  assistant_secret_arn = try(aws_secretsmanager_secret.anthropic_api_key[0].arn, null)
+  # Embeddings do Titan só com o assistente ligado; sem ele, o hashing local.
+  embeddings_model_id = var.enable_assistant ? var.embeddings_model_id : null
+}
+
 # ---------------------------------------------------------------- módulos
 
 module "networking" {
@@ -128,6 +145,8 @@ module "iam" {
   uploads_bucket_arn        = module.storage.bucket_arn
   recommender_endpoint_name = local.recommender_endpoint_name
   ml_bucket_arn             = local.ml_bucket_arn
+  assistant_secret_arn      = local.assistant_secret_arn
+  embeddings_model_id       = local.embeddings_model_id
 }
 
 module "lambda" {
@@ -155,6 +174,9 @@ module "lambda" {
   adot_layer_arn            = var.adot_layer_arn
   recommender_endpoint_name = local.recommender_endpoint_name
   ml_bucket                 = local.ml_bucket_name
+  assistant_secret_arn      = local.assistant_secret_arn
+  assistant_model           = var.assistant_model
+  embeddings_model_id       = local.embeddings_model_id
 }
 
 module "apigateway" {

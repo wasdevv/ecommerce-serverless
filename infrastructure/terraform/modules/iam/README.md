@@ -33,6 +33,8 @@ Um role por função Lambda com o mínimo que cada uma usa (segredos específico
 | name | Prefixo dos recursos (também compõe o nome das funções). | `string` | n/a | yes |
 | queue\_arn | Fila de eventos de pedido. | `string` | n/a | yes |
 | uploads\_bucket\_arn | Bucket de uploads. | `string` | n/a | yes |
+| assistant\_secret\_arn | Segredo com a chave da Anthropic que a API pode ler (null = assistente sem LLM). | `string` | `null` | no |
+| embeddings\_model\_id | Modelo de embeddings do Bedrock que api e ops podem invocar (null = embeddings locais). | `string` | `null` | no |
 | ml\_bucket\_arn | Bucket de ML onde a ops grava o export de histórico (null = sem recomendador). | `string` | `null` | no |
 | recommender\_endpoint\_name | Endpoint SageMaker que a API pode invocar (null = sem recomendador). | `string` | `null` | no |
 

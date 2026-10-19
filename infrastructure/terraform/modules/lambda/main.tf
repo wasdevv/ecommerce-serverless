@@ -8,12 +8,20 @@ locals {
   # X-Ray ativo nativo da Lambda.
   adot_enabled = var.adot_layer_arn != ""
 
+  # api (pergunta) e ops (indexação) precisam do mesmo modelo de embeddings:
+  # vetores de modelos diferentes não se comparam.
+  embeddings_env = var.embeddings_model_id == null ? {} : { EMBEDDINGS_PROVIDER = "bedrock", EMBEDDINGS_MODEL_ID = var.embeddings_model_id }
+
   functions = {
     api = {
       handler = "src/handlers/api.handler"
       timeout = 15
       memory  = var.api_memory_mb
-      env     = var.recommender_endpoint_name == null ? {} : { RECOMMENDER_ENDPOINT_NAME = var.recommender_endpoint_name }
+      env = merge(
+        var.recommender_endpoint_name == null ? {} : { RECOMMENDER_ENDPOINT_NAME = var.recommender_endpoint_name },
+        var.assistant_secret_arn == null ? {} : { ANTHROPIC_API_KEY_SECRET_ARN = var.assistant_secret_arn, ASSISTANT_MODEL = var.assistant_model },
+        local.embeddings_env,
+      )
     }
     dispatcher = {
       handler = "src/handlers/dispatcher.handler"
@@ -37,6 +45,7 @@ locals {
           ADMIN_PASSWORD_SECRET_ARN = var.admin_password_secret_arn
         },
         var.ml_bucket == null ? {} : { ML_BUCKET = var.ml_bucket },
+        local.embeddings_env,
       )
     }
   }

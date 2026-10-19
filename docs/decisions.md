@@ -131,6 +131,18 @@ deploy de um ambiente só consegue escrever no prefixo dele.
 - **Treino fora da AWS (por enquanto):** a Lambda `ops` exporta o histórico anonimizado para o S3 e o treino roda na máquina de quem opera (`scripts/publish-model.sh`). Um *SageMaker Training Job* agendado é a evolução; ficou de fora para manter o fluxo legível.
 - **Custo:** mais um serviço e um bucket por ambiente; o cliente novo e o produto novo (*cold start* de dados) só recebem/entram em recomendação depois de compras; sem avaliação offline (precisão@k) — com dados demo ela seria enganosa.
 
+## Assistente: RAG com LangGraph, e não um agente com ferramentas
+
+- **Contexto:** aplicar LangChain/LangGraph, RAG e evals no projeto, num caso de uso real de loja: o cliente pergunta em linguagem natural e recebe produtos do catálogo.
+- **Decisão:** um **workflow** fixo em LangGraph (recuperar → gerar → checar), não um agente que decide sozinho quais ferramentas chamar. A pergunta de loja sempre segue o mesmo caminho; um agente pagaria mais chamadas de LLM e latência para decidir algo que o código já sabe. O LangGraph entra pelo que ele faz bem aqui: estado explícito e arestas condicionais para os caminhos de falha (nada recuperado, sem LLM, LLM falhou), cada um testável.
+- **LangChain só onde não amarra:** o retriever implementa `BaseRetriever` (interface padrão, `invoke()`), mas o LLM é chamado pelo SDK oficial da Anthropic. Structured outputs, `fallbacks` e `effort` chegam ao SDK primeiro; um wrapper de terceiros atrasaria ou esconderia esses parâmetros.
+- **Busca híbrida com RRF:** textual do PostgreSQL (sempre em dia, acha a palavra exata) + vetorial (acha grafia diferente e, com Titan, sinônimo), fundidas por posição. RRF dispensa calibrar `ts_rank` contra cosseno, que têm escalas sem relação.
+- **`real[]` em vez de pgvector:** roda no `postgres:17-alpine` do CI e do compose sem extensão. O custo é a varredura completa da tabela de embeddings — aceitável em centenas de produtos; com milhares, `pgvector` + HNSW (suportado no RDS).
+- **Dois embedders:** Titan v2 pelo Bedrock na AWS (mesma conta, IAM, sem chave extra) e um *feature hashing* local sem custo para dev e CI. O hashing é honestamente lexical; o eval mostra o buraco (`semantic` = 0%) em vez de escondê-lo.
+- **Grounding no código:** o prompt pede para citar só produtos recebidos, mas o nó `ground` é quem garante — id fora da lista recuperada é descartado e contado. Preço e estoque nunca vêm do texto gerado.
+- **Evals em dois níveis:** recuperação é determinística e barata, então é gate no CI com pisos medidos; resposta depende de LLM e custa, então roda sob demanda com um juiz de outro modelo e notas binárias (mais estáveis que escala 1–5).
+- **Custo:** mais dependências na layer (~90 MB descompactada no total, dentro do limite de 250 MB), mais um segredo e uma chamada de rede externa por pergunta; a resposta pode levar segundos — por isso o timeout e o fallback para a lista recuperada.
+
 ## Fora do escopo (de propósito)
 
 Frontend, pagamento real/Stripe/webhooks, email real, Datadog, múltiplas

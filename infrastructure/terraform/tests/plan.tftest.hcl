@@ -57,6 +57,26 @@ run "dev_is_single_az_and_cheap" {
     condition     = length(module.recommender) == 0 && output.recommender_endpoint_name == null
     error_message = "recomendador é opt-in: sem enable_recommender não há bucket nem endpoint"
   }
+  assert {
+    condition     = output.assistant_secret_arn == null && local.embeddings_model_id == null
+    error_message = "assistente com LLM é opt-in: sem enable_assistant não há segredo nem Bedrock"
+  }
+}
+
+run "assistant_creates_an_empty_key_secret" {
+  command = plan
+  variables {
+    environment      = "dev"
+    enable_assistant = true
+  }
+  assert {
+    condition     = length(aws_secretsmanager_secret.anthropic_api_key) == 1
+    error_message = "assistente ligado deve criar o segredo da chave da Anthropic"
+  }
+  assert {
+    condition     = local.embeddings_model_id == "amazon.titan-embed-text-v2:0"
+    error_message = "assistente ligado deve usar embeddings do Bedrock"
+  }
 }
 
 run "recommender_waits_for_a_published_model" {

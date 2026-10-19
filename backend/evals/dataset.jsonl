@@ -1,0 +1,26 @@
+{"id":"lex-caneca","category":"lexical","question":"Vocês têm caneca?","expected":["MUG-001","MUG-002"]}
+{"id":"lex-livro-terraform","category":"lexical","question":"Quero um livro sobre Terraform","expected":["BOOK-002"]}
+{"id":"lex-adesivo-notebook","category":"lexical","question":"adesivo para notebook","expected":["STICKER-001","STICKER-002"]}
+{"id":"lex-mochila","category":"lexical","question":"mochila para notebook","expected":["BACKPACK-001"]}
+{"id":"lex-fone","category":"lexical","question":"fone de ouvido com cancelamento de ruído","expected":["HEADPHONE-001"]}
+{"id":"lex-teclado","category":"lexical","question":"teclado mecânico","expected":["KEYBOARD-001"]}
+{"id":"lex-camiseta","category":"lexical","question":"camiseta de algodão","expected":["TSHIRT-001","TSHIRT-002"]}
+{"id":"lex-garrafa","category":"lexical","question":"garrafa de água","expected":["BOTTLE-001"]}
+{"id":"lex-bone","category":"lexical","question":"tem boné?","expected":["CAP-001"]}
+{"id":"lex-luminaria","category":"lexical","question":"luminária de mesa","expected":["LAMP-001"]}
+{"id":"morph-canecas-cafe","category":"morphology","question":"canecas pra cafe","expected":["MUG-001","MUG-002"]}
+{"id":"morph-camisetas","category":"morphology","question":"camisetas","expected":["TSHIRT-001","TSHIRT-002"]}
+{"id":"morph-livros-observabilidade","category":"morphology","question":"livros de observabilidade","expected":["BOOK-003"]}
+{"id":"morph-agua-sem-acento","category":"morphology","question":"garrafinha de agua","expected":["BOTTLE-001"]}
+{"id":"morph-adesivos","category":"morphology","question":"adesivos","expected":["STICKER-001","STICKER-002"]}
+{"id":"sem-inverno","category":"semantic","question":"algo para me esquentar no inverno","expected":["HOODIE-001"]}
+{"id":"sem-xicara","category":"semantic","question":"xícara para o escritório","expected":["MUG-001","MUG-002"]}
+{"id":"sem-headset","category":"semantic","question":"headset sem fio","expected":["HEADPHONE-001"]}
+{"id":"sem-chuva","category":"semantic","question":"roupa para dias chuvosos","expected":["JACKET-001"]}
+{"id":"sem-iluminar","category":"semantic","question":"quero iluminar minha escrivaninha","expected":["LAMP-001"]}
+{"id":"sem-laptop","category":"semantic","question":"onde carrego meu laptop?","expected":["BACKPACK-001"]}
+{"id":"sem-anotar","category":"semantic","question":"preciso de algo para fazer anotações","expected":["NOTEBOOK-001","PEN-001"]}
+{"id":"none-geladeira","category":"none","question":"vocês vendem geladeira?","expected":[]}
+{"id":"none-celular","category":"none","question":"quero um celular samsung","expected":[]}
+{"id":"none-pizza","category":"none","question":"tem pizza de calabresa?","expected":[]}
+{"id":"stock-holografico","category":"stock","question":"adesivo holográfico DLQ","expected":[],"note":"o produto que casa está sem estoque: não pode aparecer"}

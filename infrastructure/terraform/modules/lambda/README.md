@@ -46,6 +46,9 @@ Layer de dependências, quatro funções (api, dispatcher, worker, ops) a partir
 | adot\_layer\_arn | ARN da layer ADOT/OpenTelemetry para Node.js (vazio = só X-Ray nativo). Confira o ARN atual na documentação da AWS. | `string` | `""` | no |
 | api\_memory\_mb | Memória da função API (CPU escala junto). | `number` | `512` | no |
 | architecture | arm64 (Graviton, ~20% mais barato por GB-s) ou x86\_64. | `string` | `"arm64"` | no |
+| assistant\_model | Modelo Claude do assistente. | `string` | `"claude-opus-5-5"` | no |
+| assistant\_secret\_arn | Segredo com a chave da Anthropic (null = assistente responde só com a busca). | `string` | `null` | no |
+| embeddings\_model\_id | Modelo de embeddings do Bedrock para api e ops (null = hashing local). | `string` | `null` | no |
 | log\_level | Nível de log do pino. | `string` | `"info"` | no |
 | log\_retention\_days | Retenção dos log groups. | `number` | `14` | no |
 | ml\_bucket | Bucket de ML para o export de histórico da função ops (null = ação desabilitada). | `string` | `null` | no |

@@ -18,6 +18,7 @@ garantia tem um teste que a prova, e tudo roda localmente sem conta AWS.
 - [Rodando localmente](#rodando-localmente)
 - [Usando a API (curl)](#usando-a-api-curl)
 - [Recomendação de produtos (ML)](#recomendação-de-produtos-ml)
+- [Assistente de compras (LangGraph + RAG + evals)](#assistente-de-compras-langgraph--rag--evals)
 - [Testes](#testes)
 - [Variáveis de ambiente](#variáveis-de-ambiente)
 - [Deploy na AWS](#deploy-na-aws)
@@ -40,6 +41,7 @@ garantia tem um teste que a prova, e tudo roda localmente sem conta AWS.
 | IaC | 10 módulos Terraform, 3 ambientes com state separado, bootstrap de state + GitHub OIDC |
 | CI/CD | Testes com Postgres/Redis reais, stack completa em docker compose, plan comentado no PR, deploy por plano salvo, migração e smoke test |
 | ML | Recomendação de produtos por filtragem colaborativa treinada no histórico de compras, servida por endpoint **SageMaker Serverless** e chamada pela Lambda da API, com fallback para os mais vendidos |
+| IA generativa | Assistente de compras: RAG híbrido (busca textual do PostgreSQL + embeddings do Titan) como Retriever do **LangChain**, orquestrado num grafo **LangGraph**, gerando com **Claude** e medido por **evals** (recuperação no CI, LLM-as-a-judge sob demanda) |
 | Observabilidade | Logs JSON com correlation/trace ID e redação de dados sensíveis, X-Ray, OpenTelemetry com collector sidecar, dashboard, alarmes e consultas salvas |
 
 ```
@@ -52,10 +54,12 @@ ecommerce-serverless/
 │   │   ├── api/                 # rotas, middleware, schemas Joi
 │   │   ├── services/            # regras: auth, products, orders, outbox, notifications, uploads, recommendations
 │   │   ├── recommender/         # cliente do modelo: SageMaker (AWS) ou HTTP (local)
+│   │   ├── assistant/           # RAG: embeddings, retriever (LangChain), grafo (LangGraph), Claude
 │   │   ├── db/ cache/           # pool pg + transação, migrator, cache-aside
 │   │   └── observability/       # logger pino, contexto (correlation id), OTel local
 │   ├── migrations/              # SQL versionado, aplicado em ordem
-│   ├── scripts/                 # migrate, seed, seed-history, export-training-data, bootstrap-admin, local-jobs
+│   ├── scripts/                 # migrate, seed, seed-history, export-training-data, index-products, bootstrap-admin, local-jobs
+│   ├── evals/                   # dataset + catálogo de eval, runner, juiz LLM
 │   └── tests/                   # Jest + supertest contra Postgres/Redis reais
 ├── ml/                          # recomendador em Python (só biblioteca padrão)
 │   ├── recommender/             # train.py, inference.py (handler SageMaker), serve.py (servidor local)
@@ -67,7 +71,7 @@ ecommerce-serverless/
 │   ├── bootstrap/               # bucket de state + OIDC (roda uma vez)
 │   └── tests/plan.tftest.hcl    # plan dos 3 ambientes com provider simulado
 ├── monitoring/                  # collector OTel, dashboard (template), consultas Logs Insights
-├── scripts/                     # build-lambda.sh, invoke-artifact.sh, smoke.mjs, smoke-recommendations.mjs, publish-model.sh
+├── scripts/                     # build-lambda.sh, invoke-artifact.sh, smoke.mjs, smoke-recommendations.mjs, smoke-assistant.mjs, publish-model.sh
 ├── docs/                        # openapi.yaml, architecture.md, decisions.md, costs.md
 └── docker-compose.yml
 ```
@@ -305,6 +309,142 @@ terraform apply -var-file=environments/dev.tfvars \
 - **Cliente novo recebe os mais vendidos**, e produto novo só aparece no modelo depois de ser comprado junto com outros por pelo menos 2 clientes.
 - **Não verificado numa conta AWS**: o endpoint, o container de scikit-learn carregando o `inference.py` e o `publish-model.sh` foram validados só pelo `terraform validate`/`test` (plan simulado). O contrato JSON em si é testado de ponta a ponta localmente.
 
+## Assistente de compras (LangGraph + RAG + evals)
+
+`POST /api/v1/assistant` recebe uma pergunta em linguagem natural ("vocês têm
+caneca pra café?") e devolve uma resposta curta e os produtos do catálogo que
+a sustentam. São três peças, cada uma com uma pasta própria:
+
+| Peça | O que faz | Onde |
+|---|---|---|
+| **RAG** | Recupera os produtos relevantes antes de chamar o LLM; o modelo só vê o que veio da busca | `backend/src/assistant/retriever.js` (um `BaseRetriever` do LangChain) |
+| **LangGraph** | Orquestra recuperação → geração → checagem como um grafo de estados com arestas condicionais | `backend/src/assistant/graph.js` |
+| **Evals** | Mede a recuperação (determinístico, no CI) e as respostas (LLM-as-a-judge, sob demanda) | `backend/evals/` |
+
+```mermaid
+flowchart LR
+  q([pergunta]) --> retrieve
+  retrieve -->|nada recuperado| empty[resposta fixa<br/>sem LLM]
+  retrieve -->|sem chave| extractive[lista dos produtos<br/>recuperados]
+  retrieve --> generate[Claude<br/>JSON por schema]
+  generate -->|erro, recusa, timeout| extractive
+  generate --> ground[grounding:<br/>descarta id fora da busca]
+```
+
+### Recuperação híbrida (o "R" do RAG)
+
+Duas buscas sobre o mesmo catálogo, fundidas por posição com **Reciprocal Rank
+Fusion** (RRF: `Σ 1/(60 + posição)`), que dispensa calibrar escalas de score
+diferentes:
+
+- **Textual** — `tsvector` do próprio PostgreSQL (coluna gerada, configuração
+  `portuguese`, nome pesando mais que descrição, termos ligados por OU). Sempre
+  em dia com o produto, sem job. Erra variação de grafia: "agua" não casa com
+  "água".
+- **Vetorial** — embeddings em `product_embeddings` (`real[]`, normalizados, com
+  `dot_product` em SQL). Na AWS, **Amazon Titan Text Embeddings v2** pelo
+  Bedrock; localmente e no CI, um *feature hashing* de palavras e 4-gramas que
+  não custa nada e não sai da máquina. O hashing pega grafia ("agua",
+  "camisetas"), mas **não entende sinônimo** — é para isso que existe o Titan.
+- Só produto **com estoque** é recuperado. Embedding de produto editado depois
+  da indexação deixa de valer (o `md5` do texto não bate) até o
+  `npm run index:products` (ou a ação `index-products` da Lambda `ops`) rodar de
+  novo; a busca textual cobre o intervalo.
+
+### Geração e as guardas em volta do LLM
+
+- **Claude** (`ASSISTANT_MODEL`, padrão `claude-opus-5-5`) pela API da
+  Anthropic, com **structured outputs**: a resposta é JSON validado por schema
+  (`{ answer, productIds }`), esforço `low` (pergunta de loja não precisa de
+  raciocínio longo) e `fallbacks: "default"` — se o modelo recusar por política,
+  a própria API refaz a chamada num modelo alternativo.
+- **Grounding no código, não só no prompt**: o nó `ground` descarta qualquer id
+  que o LLM cite fora da lista recuperada (inventado ou de outro produto) e
+  conta quantos descartou. Preço e estoque vêm do banco, nunca do texto gerado.
+- **Prompt injection**: catálogo e pergunta entram entre tags e com `<`/`>`
+  removidos; o prompt de sistema trata o conteúdo como dado.
+- **LLM é dependência opcional**, como o recomendador: sem chave, com erro,
+  recusa ou timeout (`ASSISTANT_TIMEOUT_MS`, 10 s), a resposta cai para a lista
+  recuperada. O header `X-Assistant-Source` diz o que aconteceu: `llm`,
+  `retrieval` ou `none`.
+- **Exige login**: cada pergunta pode custar uma chamada de LLM.
+
+### Evals
+
+O dataset (`backend/evals/dataset.jsonl`, 26 perguntas sobre um catálogo de 24
+produtos em `catalog.json`) separa as perguntas pelo que elas testam:
+`lexical` (palavra exata), `morphology` (plural, sem acento), `semantic`
+(sinônimo, paráfrase), `none` (a loja não vende aquilo) e `stock` (o único
+produto que casa está esgotado).
+
+```bash
+# banco descartável: o runner apaga o catálogo dele
+createdb ecommerce_eval
+EVAL_DATABASE_URL=postgres://.../ecommerce_eval npm run eval
+
+# + respostas: gerador e juiz chamam a API da Anthropic (custa)
+EVAL_DATABASE_URL=... ANTHROPIC_API_KEY=... npm run eval -- --llm --out eval-report.json
+```
+
+Resultado medido com o embedder de hashing (k = 5):
+
+| Modo | hit@5 | lexical | morphology | semantic | abstenção (`none`) | esgotado recuperado |
+|---|---|---|---|---|---|---|
+| `fts` | 64% | 100% | 80% | 0% | 100% | 0 |
+| `vector` | 68% | 100% | 100% | 0% | 100% | 0 |
+| `hybrid` | 68% | 100% | 100% | 0% | 100% | 0 |
+
+A linha `semantic` zerada é o resultado esperado, não um bug: nem a busca
+textual nem o hashing sabem que "xícara" é "caneca". O eval existe para tornar
+isso visível — rode com `EMBEDDINGS_PROVIDER=bedrock` (credenciais AWS) para
+medir o Titan no mesmo dataset.
+
+- **Gate no CI**: `tests/assistant-evals.test.js` falha o build se o modo
+  `hybrid` cair abaixo de 100% em `lexical` e `morphology`, abstenção abaixo de
+  100% ou se recuperar produto esgotado. O job também publica o relatório
+  completo (`assistant-eval-report`).
+- **Com `--llm`**: métricas de código (respondidas pelo LLM, *grounded* = nenhum
+  id descartado, citações corretas) e duas notas binárias de um **juiz LLM**
+  (`EVAL_JUDGE_MODEL`, padrão `claude-sonnet-5-5`, outro modelo que o gerador):
+  *faithful* (nada além do que está nos produtos) e *helpful* (responde à
+  pergunta ou admite que nada serve). O runner soma os tokens de gerador e juiz
+  — é o custo de uma rodada.
+
+### Na AWS
+
+```bash
+terraform apply -var-file=environments/dev.tfvars -var enable_assistant=true
+# a chave entra por fora: nunca no state nem no repositório
+aws secretsmanager put-secret-value \
+  --secret-id "$(terraform output -raw assistant_secret_arn)" --secret-string "$ANTHROPIC_API_KEY"
+aws lambda invoke --function-name "$(terraform output -raw ops_function_name)" \
+  --cli-binary-format raw-in-base64-out --payload '{"action":"index-products"}' /dev/stdout
+```
+
+- `enable_assistant` cria o segredo **vazio** e liga o Titan
+  (`EMBEDDINGS_PROVIDER=bedrock`) em `api` e `ops` — as duas precisam do mesmo
+  modelo, porque vetores de modelos diferentes não se comparam. Sem
+  `enable_assistant`, a rota funciona do mesmo jeito, com o hashing e sem LLM.
+- **IAM**: `api` lê só esse segredo; `api` e `ops` só podem `bedrock:InvokeModel`
+  no modelo de embeddings configurado. O acesso ao Titan precisa estar liberado
+  no console do Bedrock, na região do deploy.
+- A Lambda chega na API da Anthropic e no Bedrock pelo NAT que já existe.
+
+### Limitações
+
+- **Não verificado com LLM nem com Titan**: a chamada ao Claude, o juiz e o
+  `BedrockEmbedder` foram testados com clientes dublês (formato da requisição,
+  parsing, recusa, corpo inválido). Nenhuma chamada real foi feita, então os
+  números de `--llm` e de `semantic` com Titan ainda não existem.
+- **Busca vetorial sem índice**: `dot_product` varre a tabela; serve para
+  centenas de produtos. Com milhares, o caminho é a extensão `pgvector` com
+  índice HNSW (o RDS suporta).
+- **Sem limite de taxa por usuário** na rota: o login reduz o abuso, mas cada
+  pergunta pode chamar o LLM. Em produção, *usage plan* no API Gateway ou um
+  contador no Redis.
+- **Uma pergunta por vez**, sem histórico de conversa — o estado do grafo vive
+  só durante a requisição.
+
 ## Testes
 
 ```bash
@@ -322,7 +462,7 @@ cd ../ml && python3 -m unittest discover -s tests -v   # recomendador (só bibli
 
 Os testes usam **PostgreSQL e Redis reais**, de propósito: o que mais importa
 aqui (lock de linha, constraint, transação, `SKIP LOCKED`, Redis caindo) não
-existe num mock. O único dublê é o cliente SQS no teste da outbox. O Jest
+existe num mock. Dublês só na fronteira com serviço externo: o cliente SQS no teste da outbox e os clientes de SageMaker, Bedrock e da API da Anthropic (o que se testa é o formato da chamada e o tratamento da resposta, não o modelo). O Jest
 falha abaixo de **80%** em linhas, branches, funções e statements de `src/`
 (handlers incluídos).
 
@@ -376,6 +516,13 @@ Não prova que a AWS aceita os recursos — isso só um plan/apply real prova.
 | `RECOMMENDER_ENDPOINT_NAME` | | api | Endpoint SageMaker; sem ele e sem URL, só mais vendidos |
 | `RECOMMENDER_TIMEOUT_MS` | 800 | 800 | Tempo máximo esperando o modelo antes do fallback |
 | `ML_BUCKET` | | ops | Destino do export de histórico (`training/`) |
+| `ANTHROPIC_API_KEY` | vazio (sem LLM) | — | Chave da Anthropic; na AWS vem de `ANTHROPIC_API_KEY_SECRET_ARN` |
+| `ANTHROPIC_API_KEY_SECRET_ARN` | | api, com `enable_assistant` | Segredo com a chave (lido no cold start; vazio = sem LLM) |
+| `ASSISTANT_MODEL` | `claude-opus-5-5` | `assistant_model` | Modelo que gera a resposta |
+| `ASSISTANT_TIMEOUT_MS` | 10000 | 10000 | Tempo máximo esperando o LLM antes de responder só com a busca |
+| `ASSISTANT_TOP_K` / `ASSISTANT_MIN_VECTOR_SCORE` | 5 / 0.2 | 5 / 0.2 | Produtos entregues ao LLM / similaridade mínima na busca vetorial |
+| `EMBEDDINGS_PROVIDER` | `hashing` | `bedrock` com `enable_assistant` | Embeddings do catálogo e da pergunta |
+| `EMBEDDINGS_MODEL_ID` | `amazon.titan-embed-text-v2:0` | idem | Modelo de embeddings no Bedrock |
 
 `.env.example` tem os valores locais. Nenhum `.env` real é versionado.
 
@@ -504,6 +651,9 @@ para receber por email (confirme a assinatura do SNS).
 | `password authentication failed` depois de dias funcionando | Rotação automática da senha do RDS (a cada 7 dias por padrão): a Lambda leu o segredo no cold start e guardou a senha antiga. Contorno imediato: forçar novos ambientes de execução (ex.: novo deploy ou `aws lambda update-function-configuration` mudando uma variável). Correção definitiva: IAM auth no RDS Proxy — ver [decisions.md](docs/decisions.md#segredos-fora-do-state-do-terraform) |
 | Lambda sem acesso a SQS/Secrets | Rota da sub-rede privada para o NAT; IAM do role da função |
 | `X-Recommendation-Source: popular` para quem tem histórico | Log `recommender unavailable, using fallback` (timeout, 503 sem modelo, erro de IAM). Na AWS: status do endpoint no console do SageMaker e logs em `/aws/sagemaker/Endpoints/<nome>`. Logo depois de ocioso, o primeiro pedido pode estourar os 800 ms (*cold start* do serverless) |
+| `X-Assistant-Source: retrieval` com chave configurada | Log `assistant llm unavailable, answering from retrieval` (timeout de 10 s, recusa, chave inválida). Na AWS: segredo sem valor (`put-secret-value` não rodou) ou sem rota de saída pelo NAT |
+| Assistente não acha por sinônimo | Embeddings em `hashing` (não entende sinônimo) ou catálogo não indexado: rode `index-products` e confira `EMBEDDINGS_PROVIDER=bedrock` em `api` **e** `ops` |
+| `AccessDeniedException` do Bedrock | Acesso ao Titan não liberado no console do Bedrock nessa região |
 | Endpoint SageMaker falha ao criar | O `model.tar.gz` não está em `models/<versão>/` — rode o `publish-model.sh` antes de preencher `recommender_model_version` |
 
 ## Recuperação de deploy e migrações
@@ -558,6 +708,10 @@ botões de check/preview do Swarm, sugestão:
 | Upload seguro direto ao S3 | `backend/src/services/uploads.js` |
 | Filtragem colaborativa e formato de modelo SageMaker | `ml/recommender/train.py`, `inference.py` |
 | Modelo como dependência opcional (timeout + fallback) | `backend/src/services/recommendations.js`, `src/recommender/client.js` |
+| RAG híbrido (texto + vetor + RRF) como Retriever do LangChain | `backend/src/assistant/retriever.js` |
+| Grafo LangGraph com arestas condicionais e fallback | `backend/src/assistant/graph.js` |
+| Structured outputs, fallback por recusa, prompt injection | `backend/src/assistant/llm.js` |
+| Evals de recuperação e LLM-as-a-judge | `backend/evals/lib.js`, `judge.js`, `tests/assistant-evals.test.js` |
 | Endpoint em duas fases, IAM por prefixo | `infrastructure/terraform/modules/recommender/main.tf` |
 | Logs estruturados e correlação | `backend/src/observability/` |
 | Segredos fora do state | `infrastructure/terraform/main.tf` (`ephemeral`, `secret_string_wo`) |
@@ -574,7 +728,7 @@ README por módulo em `infrastructure/terraform/modules/*/`.
 
 | Item | Situação |
 |---|---|
-| `npm ci`, lint, 69 testes, cobertura ≥ 80% nas 4 métricas | ✅ verificado localmente (Node 24.21, PostgreSQL 18, Redis 7.4) |
+| `npm ci`, lint, 87 testes, cobertura ≥ 80% nas 4 métricas | ✅ verificado localmente (Node 24.22, PostgreSQL 18, Redis 7.4) |
 | Build do zip + invoke do handler com evento API Gateway | ✅ verificado |
 | Smoke test contra a API local | ✅ verificado |
 | `terraform fmt`, `validate`, `test` (plan simulado × 3 ambientes) | ✅ verificado (Terraform 1.16.5, AWS provider 6.68) |
@@ -587,6 +741,9 @@ README por módulo em `infrastructure/terraform/modules/*/`.
 | Recomendador ponta a ponta: export do PostgreSQL → `train.py` → `serve.py` → `GET /recommendations` passando de `popular` para `model` | ✅ verificado no Jest e manualmente com a API rodando |
 | Recomendador no `docker compose` (seed demo → export → treino → smoke) | ✅ verificado no CI (job `compose`) — Docker não estava disponível na máquina de desenvolvimento |
 | Endpoint SageMaker real, container scikit-learn carregando o `inference.py`, `publish-model.sh` | ❌ não executado — validado só por `terraform validate`/`test` |
+| Assistente: recuperação híbrida, grafo, grounding, rota e eval de recuperação (fts × vector × hybrid) | ✅ verificado localmente (Jest + `npm run eval`) e manualmente com a API rodando (`smoke-assistant.mjs` → `ASSISTANT_OK`) |
+| Assistente no `docker compose` (index + smoke) e relatório de eval no CI | ⏳ adicionado ao CI, ainda não rodado lá |
+| Chamada real ao Claude, juiz LLM (`--llm`) e embeddings do Titan | ❌ não executado — sem chave da Anthropic nem conta AWS; testado só com clientes dublês |
 | Preços da estimativa de custos | ⚠️ tabela de referência, não consultada na AWS Pricing Calculator |
 
 ## Licença

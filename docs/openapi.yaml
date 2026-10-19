@@ -373,6 +373,55 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /assistant:
+    post:
+      summary: Pergunta ao assistente de compras
+      description: |
+        Busca híbrida no catálogo (texto do PostgreSQL + embeddings) e resposta
+        gerada por Claude só com os produtos recuperados. Produtos citados pelo
+        LLM fora da busca são descartados; preço e estoque vêm do banco. Sem LLM
+        configurado, ou se ele falhar, a resposta lista os produtos recuperados.
+        Nunca inclui produto sem estoque.
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              additionalProperties: false
+              properties:
+                question: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Assistant-Source:
+              description: llm (resposta gerada e checada), retrieval (só a busca) ou none (nada combina).
+              schema: { type: string, enum: [llm, retrieval, none] }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      answer: { type: string }
+                      products:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            sku: { type: string }
+                            name: { type: string }
+                            priceCents: { type: integer }
+                            stock: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /uploads/presign:
     post:
       summary: Gera POST pré-assinado para o bucket privado

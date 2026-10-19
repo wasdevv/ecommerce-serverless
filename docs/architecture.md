@@ -104,6 +104,22 @@ O endpoint não está na VPC (endpoints serverless não suportam VPC): a Lambda
 por IAM. O fluxo de treino e as limitações estão no
 [README](../README.md#recomendação-de-produtos-ml).
 
+## Assistente de compras (RAG)
+
+```
+POST /api/v1/assistant {"question": "..."}
+  └─ grafo LangGraph (src/assistant/graph.js)
+       retrieve   PostgreSQL: tsvector (texto) + product_embeddings (vetor), fundidos por RRF
+       generate   API da Anthropic (Claude, JSON por schema)       ← opcional: sem chave/erro/timeout pula
+       ground     descarta id que não veio da busca; preço/estoque do banco
+200 {"data": {"answer": "...", "products": [...]}}   X-Assistant-Source: llm | retrieval | none
+```
+
+Embeddings do catálogo são gerados fora da requisição (ação `index-products`
+da Lambda `ops`, incremental por `md5` do texto); na requisição só a pergunta
+vira vetor. Na AWS, Titan pelo Bedrock; local e CI, hashing. Detalhes e evals
+no [README](../README.md#assistente-de-compras-langgraph--rag--evals).
+
 ## Observabilidade e o "sidecar"
 
 O rascunho original pedia um *sidecar pattern*. Sidecar é um container ao

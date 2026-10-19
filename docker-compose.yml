@@ -12,6 +12,9 @@
 #   docker compose run --rm api npm run seed:history
 #   docker compose run --rm -T api npm run -s export:training-data -- - \
 #     | docker compose run --rm -T recommender python -m recommender.train - /opt/ml/model
+#
+# Assistente (POST /api/v1/assistant): indexa o catálogo para a busca vetorial.
+#   docker compose run --rm api npm run index:products
 
 x-app-env: &app-env
   APP_ENV: local
@@ -32,6 +35,9 @@ x-app-env: &app-env
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   # Na AWS é RECOMMENDER_ENDPOINT_NAME (SageMaker); aqui, o serve.py.
   RECOMMENDER_URL: http://recommender:8080
+  # Assistente: sem chave, responde só com a busca. Com chave no shell
+  # (export ANTHROPIC_API_KEY=...), gera a resposta com Claude.
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
 services:
   api:

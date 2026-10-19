@@ -63,6 +63,23 @@ cobrança é o que importa para estudar:
 - **Treino:** roda na sua máquina (`scripts/publish-model.sh`), sem custo AWS
   além da invocação da Lambda `ops`.
 
+## Assistente (opcional, `enable_assistant`)
+
+Também fora dos totais e **não estimado em dólares** — depende do volume de
+perguntas. Os componentes:
+
+- **API da Anthropic:** cobrada por token de entrada e saída de cada pergunta
+  (prompt com até 5 produtos + resposta curta, esforço `low`). Preços na
+  [página da Anthropic](https://www.anthropic.com/pricing). Sem chave no
+  segredo, custo zero: o assistente responde só com a busca.
+- **Titan Embeddings (Bedrock):** cobrado por token de entrada — uma vez por
+  produto na indexação (incremental) e uma vez por pergunta. Textos curtos;
+  confira a [página de preços do Bedrock](https://aws.amazon.com/bedrock/pricing/).
+- **Secrets Manager:** um segredo a mais por ambiente.
+- **Evals com `--llm`:** cada rodada chama gerador **e** juiz para as 26
+  perguntas; o runner imprime o total de tokens. O eval de recuperação (o do
+  CI) não chama nenhum serviço pago.
+
 ## Como gastar o mínimo estudando
 
 1. Rode tudo localmente com `docker compose` — custo zero.

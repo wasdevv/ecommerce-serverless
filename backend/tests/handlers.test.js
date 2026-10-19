@@ -95,6 +95,16 @@ describe('ops handler', () => {
     expect(rows[0].stock).toBe(1000);
   });
 
+  it('indexes the catalog for the assistant incrementally', async () => {
+    await ctx.product({ name: 'Caneca' });
+    await expect(ops.handler({ action: 'index-products' })).resolves.toEqual({
+      action: 'index-products',
+      indexed: 1,
+      model: 'hashing-v1-512',
+    });
+    await expect(ops.handler({ action: 'index-products' })).resolves.toMatchObject({ indexed: 0 });
+  });
+
   it('refuses unknown actions and unconfigured admin bootstrap', async () => {
     await expect(ops.handler({ action: 'drop-database' })).rejects.toThrow(/unknown action/);
     await expect(ops.handler({})).rejects.toThrow(/unknown action/);

@@ -42,6 +42,19 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/ecommerce_test
           TEST_REDIS_URL: redis://localhost:6379/15
+      # Eval de recuperação do assistente (fts x vector x hybrid) num banco
+      # descartável. O gate com pisos já rodou na suíte; aqui fica o relatório.
+      - name: Assistant retrieval eval
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE ecommerce_eval"
+          npm run eval -- --out eval-report.json
+        env:
+          EVAL_DATABASE_URL: postgres://postgres:postgres@localhost:5432/ecommerce_eval
+      - uses: actions/upload-artifact@v7
+        with:
+          name: assistant-eval-report
+          path: backend/eval-report.json
+          retention-days: 30
       - name: Build Lambda artifacts
         run: bash ../scripts/build-lambda.sh
       - name: Invoke the built artifact with an API Gateway event
@@ -97,6 +110,10 @@ jobs:
           docker compose run --rm -T api npm run -s export:training-data -- - \
             | docker compose run --rm -T recommender python -m recommender.train - /opt/ml/model
           node scripts/smoke-recommendations.mjs http://localhost:3000
+      - name: Assistant answers from the indexed catalog
+        run: |
+          docker compose run --rm api npm run index:products
+          node scripts/smoke-assistant.mjs http://localhost:3000
       - name: Collector received spans from the API
         run: docker compose logs otel-collector | grep -m5 -E "spans"
       - name: Dump logs on failure

@@ -29,3 +29,6 @@ crash.log
 ml/data/
 ml/model/
 __pycache__/
+
+# Relatórios dos evals do assistente.
+eval-report*.json

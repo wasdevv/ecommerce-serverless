@@ -9,10 +9,22 @@ const { OrderService } = require('./services/orders');
 const { UploadService } = require('./services/uploads');
 const { RecommendationService } = require('./services/recommendations');
 const { createRecommender } = require('./recommender/client');
+const { AssistantService } = require('./services/assistant');
+const { createEmbedder } = require('./assistant/embeddings');
+const { createAnswerer } = require('./assistant/llm');
 
 // Monta o app a partir das dependências já construídas. Não abre porta: o
 // server.js (local) e o handlers/api.js (Lambda) decidem como servir.
-function createApp({ config, db, cache, s3, recommender = createRecommender(config.recommender), log = defaultLogger }) {
+function createApp({
+  config,
+  db,
+  cache,
+  s3,
+  recommender = createRecommender(config.recommender),
+  embedder = createEmbedder(config.embeddings),
+  answerer = createAnswerer(config.assistant),
+  log = defaultLogger,
+}) {
   const authService = new AuthService({ db, jwtConfig: config.jwt });
   const deps = {
     authService,
@@ -21,6 +33,7 @@ function createApp({ config, db, cache, s3, recommender = createRecommender(conf
     uploadService: new UploadService({ uploadsConfig: config.uploads, s3 }),
     uploadsConfig: config.uploads,
     recommendationService: new RecommendationService({ db, cache, recommender, log }),
+    assistantService: new AssistantService({ db, embedder, answerer, retrieval: config.assistant.retrieval, log }),
   };
 
   const app = express();
@@ -45,6 +58,7 @@ function createApp({ config, db, cache, s3, recommender = createRecommender(conf
   api.use('/orders', mount, require('./api/routes/orders')(deps));
   api.use('/uploads', mount, require('./api/routes/uploads')(deps));
   api.use('/recommendations', mount, require('./api/routes/recommendations')(deps));
+  api.use('/assistant', mount, require('./api/routes/assistant')(deps));
 
   app.use('/api/v1', api);
   app.use(notFoundHandler);

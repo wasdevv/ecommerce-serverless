@@ -41,6 +41,11 @@ output "recommender_endpoint_name" {
   value       = local.recommender_endpoint_name
 }
 
+output "assistant_secret_arn" {
+  description = "Segredo onde gravar a chave da Anthropic (null sem enable_assistant). O valor nunca sai do Secrets Manager."
+  value       = local.assistant_secret_arn
+}
+
 output "admin_password_secret_arn" {
   description = "ARN do segredo com a senha do admin bootstrap (o valor não é exposto)."
   value       = aws_secretsmanager_secret.admin_password.arn

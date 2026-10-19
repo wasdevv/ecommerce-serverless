@@ -7,6 +7,8 @@ const { PutObjectCommand, S3Client } = require('@aws-sdk/client-s3');
 const { upsertAdmin } = require('../services/auth');
 const { exportTrainingData } = require('../services/recommendations');
 const { logger } = require('../observability/logger');
+const { indexProducts } = require('../assistant/retriever');
+const { createEmbedder } = require('../assistant/embeddings');
 
 // Lambda de operação, sem rota HTTP: só quem tem lambda:InvokeFunction (o
 // pipeline de deploy) chega aqui. É o único caminho até o RDS, que vive em
@@ -48,6 +50,12 @@ const ACTIONS = {
     const key = `training/order_items-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
     await new S3Client({}).send(new PutObjectCommand({ Bucket: config.ml.bucket, Key: key, Body: csv, ContentType: 'text/csv' }));
     return { rows, uri: `s3://${config.ml.bucket}/${key}` };
+  },
+
+  // Embeddings do catálogo para a busca do assistente. Incremental: só
+  // produto novo ou editado desde a última execução chama o modelo.
+  async 'index-products'({ db, config }) {
+    return indexProducts(db, createEmbedder(config.embeddings));
   },
 };
 

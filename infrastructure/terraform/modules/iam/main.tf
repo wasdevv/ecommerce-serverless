@@ -5,6 +5,8 @@
 #   ops        -> lê segredos de DB e do admin bootstrap
 # Com o recomendador ligado: api invoca o endpoint SageMaker, ops grava o
 # export de histórico em training/ no bucket de ML.
+# Com o assistente ligado: api lê a chave da Anthropic; api (pergunta) e ops
+# (indexação do catálogo) invocam só o modelo de embeddings configurado.
 # Comum a todos: escrever no próprio log group, ENIs da VPC e X-Ray.
 
 data "aws_caller_identity" "current" {}
@@ -26,13 +28,20 @@ locals {
     { actions = ["s3:PutObject"], resources = ["${var.ml_bucket_arn}/training/*"] },
   ]
 
+  embeddings = var.embeddings_model_id == null ? [] : [
+    { actions = ["bedrock:InvokeModel"], resources = ["arn:aws:bedrock:${local.region}::foundation-model/${var.embeddings_model_id}"] },
+  ]
+  assistant_secret = var.assistant_secret_arn == null ? [] : [
+    { actions = ["secretsmanager:GetSecretValue"], resources = [var.assistant_secret_arn] },
+  ]
+
   specific = {
     api = concat([
       { actions = ["secretsmanager:GetSecretValue"], resources = [var.db_secret_arn, var.jwt_secret_arn] },
       # A URL pré-assinada carrega a permissão de quem assina: sem este
       # PutObject o S3 recusaria o upload do cliente.
       { actions = ["s3:PutObject"], resources = ["${var.uploads_bucket_arn}/users/*"] },
-    ], local.recommender)
+    ], local.recommender, local.embeddings, local.assistant_secret)
     dispatcher = [
       { actions = ["secretsmanager:GetSecretValue"], resources = [var.db_secret_arn] },
       { actions = ["sqs:SendMessage"], resources = [var.queue_arn] },
@@ -43,7 +52,7 @@ locals {
     ]
     ops = concat([
       { actions = ["secretsmanager:GetSecretValue"], resources = [var.db_secret_arn, var.admin_password_secret_arn] },
-    ], local.training_export)
+    ], local.training_export, local.embeddings)
   }
 }
 
