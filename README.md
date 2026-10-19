@@ -742,7 +742,7 @@ README por módulo em `infrastructure/terraform/modules/*/`.
 | Recomendador no `docker compose` (seed demo → export → treino → smoke) | ✅ verificado no CI (job `compose`) — Docker não estava disponível na máquina de desenvolvimento |
 | Endpoint SageMaker real, container scikit-learn carregando o `inference.py`, `publish-model.sh` | ❌ não executado — validado só por `terraform validate`/`test` |
 | Assistente: recuperação híbrida, grafo, grounding, rota e eval de recuperação (fts × vector × hybrid) | ✅ verificado localmente (Jest + `npm run eval`) e manualmente com a API rodando (`smoke-assistant.mjs` → `ASSISTANT_OK`) |
-| Assistente no `docker compose` (index + smoke) e relatório de eval no CI | ⏳ adicionado ao CI, ainda não rodado lá |
+| Assistente no `docker compose` (index + smoke) e relatório de eval no CI | ✅ verificado no CI (jobs `backend` e `compose`) |
 | Chamada real ao Claude, juiz LLM (`--llm`) e embeddings do Titan | ❌ não executado — sem chave da Anthropic nem conta AWS; testado só com clientes dublês |
 | Preços da estimativa de custos | ⚠️ tabela de referência, não consultada na AWS Pricing Calculator |
 
